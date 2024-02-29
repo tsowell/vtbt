@@ -249,10 +249,11 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 int main(void)
 {
 	int err;
-
 	err = bt_enable(NULL);
 
-	settings_load();
+	if (IS_ENABLED(CONFIG_SETTINGS)) {
+		settings_load();
+	}
 
 	bt_set_bondable(true);
 
