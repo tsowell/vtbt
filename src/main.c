@@ -20,6 +20,32 @@
 #include <zephyr/settings/settings.h>
 #include <zephyr/sys/byteorder.h>
 
+#include <zephyr/drivers/led_strip.h>
+
+#define STRIP_NODE              DT_ALIAS(led_strip)
+#define STRIP_NUM_PIXELS        DT_PROP(DT_ALIAS(led_strip), chain_length)
+
+struct led_rgb pixels[STRIP_NUM_PIXELS];
+
+static const struct device *const strip = DEVICE_DT_GET(STRIP_NODE);
+
+static const struct led_rgb color_black = { .r = 0x00, .g = 0x00, .b = 0x00 };
+static const struct led_rgb color_amber = { .r = 0x03, .g = 0x01, .b = 0x00 };
+static const struct led_rgb color_blue  = { .r = 0x00, .g = 0x00, .b = 0x04 };
+static const struct led_rgb color_green = { .r = 0x00, .g = 0x04, .b = 0x00 };
+
+static void rgb_led_set(const struct led_rgb *color)
+{
+	memset(&pixels, 0x00, sizeof(pixels));
+	for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
+		memcpy(&pixels[i], color, sizeof(struct led_rgb));
+	}
+	int rc = led_strip_update_rgb(strip, pixels, STRIP_NUM_PIXELS);
+	if (rc) {
+		printk("Couldn't update strip: %d\n", rc);
+	}
+}
+
 static void start_scan(void);
 
 static struct bt_conn *default_conn;
@@ -27,6 +53,17 @@ static struct bt_conn *default_conn;
 static struct bt_uuid_16 discover_uuid = BT_UUID_INIT_16(0);
 static struct bt_gatt_discover_params discover_params;
 static struct bt_gatt_subscribe_params subscribe_params;
+
+static void pairing_complete_func(struct bt_conn *conn, bool bonded)
+{
+	rgb_led_set(&color_amber);
+}
+
+static struct bt_conn_auth_info_cb auth_info_cb = {
+	.pairing_complete = pairing_complete_func,
+	.pairing_failed = NULL,
+	.bond_deleted = NULL,
+};
 
 static uint8_t notify_func(struct bt_conn *conn,
 			   struct bt_gatt_subscribe_params *params,
@@ -115,6 +152,7 @@ static uint8_t discover_func(struct bt_conn *conn,
 			printk("Subscribe failed (err %d)\n", err);
 		} else {
 			printk("[SUBSCRIBED]\n");
+			rgb_led_set(&color_green);
 		}
 
 		return BT_GATT_ITER_STOP;
@@ -128,7 +166,7 @@ static bool eir_found(struct bt_data *data, void *user_data)
 	bt_addr_le_t *addr = user_data;
 	int i;
 
-//	printk("[AD]: %u data_len %u\n", data->type, data->data_len);
+	printk("[AD]: %u data_len %u\n", data->type, data->data_len);
 
 	switch (data->type) {
 	case BT_DATA_UUID16_SOME:
@@ -177,8 +215,8 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 	char dev[BT_ADDR_LE_STR_LEN];
 
 	bt_addr_le_to_str(addr, dev, sizeof(dev));
-//	printk("[DEVICE]: %s, AD evt type %u, AD data len %u, RSSI %i\n",
-//	       dev, type, ad->len, rssi);
+	printk("[DEVICE]: %s, AD evt type %u, AD data len %u, RSSI %i\n",
+	       dev, type, ad->len, rssi);
 
 	/* We're only interested in connectable events */
 	if (type == BT_GAP_ADV_TYPE_ADV_IND ||
@@ -207,6 +245,8 @@ static void start_scan(void)
 	}
 
 	printk("Scanning successfully started\n");
+
+	rgb_led_set(&color_blue);
 }
 
 static void connected(struct bt_conn *conn, uint8_t conn_err)
@@ -271,6 +311,16 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 
 int main(void)
 {
+	if (device_is_ready(strip)) {
+		printk("Found LED strip device %s\n", strip->name);
+	} else {
+		printk("LED strip device %s is not ready\n", strip->name);
+	}
+
+	/* Not sure why this needs to be called two times at first */
+	rgb_led_set(&color_black);
+	rgb_led_set(&color_black);
+
 	int err;
 	err = bt_enable(NULL);
 
@@ -286,6 +336,8 @@ int main(void)
 		printk("Bluetooth init failed (err %d)\n", err);
 		return 0;
 	}
+
+	bt_conn_auth_info_cb_register(&auth_info_cb);
 
 	printk("Bluetooth initialized\n");
 
