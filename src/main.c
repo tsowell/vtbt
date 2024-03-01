@@ -47,6 +47,8 @@ static uint8_t notify_func(struct bt_conn *conn,
 	return BT_GATT_ITER_CONTINUE;
 }
 
+static uint16_t hids_handle = 0;
+
 static uint8_t discover_func(struct bt_conn *conn,
 			     const struct bt_gatt_attr *attr,
 			     struct bt_gatt_discover_params *params)
@@ -62,9 +64,30 @@ static uint8_t discover_func(struct bt_conn *conn,
 	printk("[ATTRIBUTE] handle %u\n", attr->handle);
 
 	if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_HIDS)) {
+		hids_handle = attr->handle;
+		memcpy(&discover_uuid, BT_UUID_HIDS_BOOT_KB_IN_REPORT, sizeof(discover_uuid));
+		discover_params.uuid = &discover_uuid.uuid;
+		discover_params.start_handle = hids_handle + 1;
+		discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
+
+		err = bt_gatt_discover(conn, &discover_params);
+		if (err) {
+			printk("Discover failed (err %d)\n", err);
+		}
+	} else if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_HIDS_BOOT_KB_IN_REPORT)) {
+		memcpy(&discover_uuid, BT_UUID_HIDS_BOOT_KB_OUT_REPORT, sizeof(discover_uuid));
+		discover_params.uuid = &discover_uuid.uuid;
+		discover_params.start_handle = hids_handle + 1;
+		discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
+
+		err = bt_gatt_discover(conn, &discover_params);
+		if (err) {
+			printk("Discover failed (err %d)\n", err);
+		}
+	} else if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_HIDS_BOOT_KB_OUT_REPORT)) {
 		memcpy(&discover_uuid, BT_UUID_HIDS_REPORT, sizeof(discover_uuid));
 		discover_params.uuid = &discover_uuid.uuid;
-		discover_params.start_handle = attr->handle + 1;
+		discover_params.start_handle = hids_handle + 1;
 		discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
 
 		err = bt_gatt_discover(conn, &discover_params);
@@ -74,7 +97,7 @@ static uint8_t discover_func(struct bt_conn *conn,
 	} else if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_HIDS_REPORT)) {
 		memcpy(&discover_uuid, BT_UUID_GATT_CCC, sizeof(discover_uuid));
 		discover_params.uuid = &discover_uuid.uuid;
-		discover_params.start_handle = attr->handle + 2;
+		discover_params.start_handle = attr->handle + 1;
 		discover_params.type = BT_GATT_DISCOVER_DESCRIPTOR;
 		subscribe_params.value_handle = bt_gatt_attr_value_handle(attr);
 
