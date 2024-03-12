@@ -6,6 +6,10 @@
 
 #include <zephyr/dt-bindings/led/led.h>
 
+&uart0 {
+	current-speed = <4800>;
+};
+
 &spi2 {
 	/* Workaround to support WS2812 driver */
 	line-idle-low;
