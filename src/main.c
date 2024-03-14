@@ -1,362 +1,258 @@
-/* main.c - Application main entry point */
+#include <string.h>
 
-/*
- * Copyright (c) 2015-2016 Intel Corporation
- *
- * SPDX-License-Identifier: Apache-2.0
- */
-
-#include <zephyr/types.h>
-#include <stddef.h>
-#include <errno.h>
-#include <zephyr/logging/log.h>
 #include <zephyr/kernel.h>
-
 #include <zephyr/drivers/uart.h>
+#include <zephyr/logging/log.h>
 
-#include <zephyr/bluetooth/bluetooth.h>
-#include <zephyr/bluetooth/hci.h>
-#include <zephyr/bluetooth/conn.h>
-#include <zephyr/bluetooth/uuid.h>
-#include <zephyr/bluetooth/gatt.h>
-#include <zephyr/settings/settings.h>
-#include <zephyr/sys/byteorder.h>
-
-#include <zephyr/drivers/led_strip.h>
-
-#include "config.h"
 #include "lk201.h"
+#include "bluetooth.h"
+#include "config.h"
 
-#define STRIP_NODE              DT_ALIAS(led_strip)
-#define STRIP_NUM_PIXELS        DT_PROP(DT_ALIAS(led_strip), chain_length)
+#define UART_DEVICE_NODE DT_CHOSEN(zephyr_vt_uart)
 
-LOG_MODULE_REGISTER(main, CONFIG_LOG_DEFAULT_LEVEL);
+static const struct device *const uart_dev = DEVICE_DT_GET(UART_DEVICE_NODE);
 
-struct led_rgb pixels[STRIP_NUM_PIXELS];
+LOG_MODULE_REGISTER(lk201, CONFIG_LOG_DEFAULT_LEVEL);
 
-static const struct device *const strip = DEVICE_DT_GET(STRIP_NODE);
+static int keys[NUM_KEYS];
 
-static const struct led_rgb color_black = { .r = 0x00, .g = 0x00, .b = 0x00 };
-static const struct led_rgb color_amber = { .r = 0x03, .g = 0x01, .b = 0x00 };
-static const struct led_rgb color_blue  = { .r = 0x00, .g = 0x00, .b = 0x04 };
-static const struct led_rgb color_green = { .r = 0x00, .g = 0x04, .b = 0x00 };
-
-static void rgb_led_set(const struct led_rgb *color)
-{
-	memset(&pixels, 0x00, sizeof(pixels));
-	for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-		memcpy(&pixels[i], color, sizeof(struct led_rgb));
-	}
-	int rc = led_strip_update_rgb(strip, pixels, STRIP_NUM_PIXELS);
-	if (rc) {
-		LOG_ERR("Couldn't update strip: %d", rc);
-	}
-}
-
-static void start_scan(void);
-
-static struct bt_conn *default_conn;
-
-static struct bt_uuid_16 discover_uuid = BT_UUID_INIT_16(0);
-static struct bt_gatt_discover_params discover_params;
-static struct bt_gatt_subscribe_params subscribe_params;
-
-static void pairing_complete_func(struct bt_conn *conn, bool bonded)
-{
-	rgb_led_set(&color_amber);
-}
-
-static struct bt_conn_auth_info_cb auth_info_cb = {
-	.pairing_complete = pairing_complete_func,
-	.pairing_failed = NULL,
-	.bond_deleted = NULL,
+static struct repeat_buffer repeat_buffers[NUM_REPEAT_BUFFERS] = {
+	{ .timeout = 500, .interval = 30 },
+	{ .timeout = 300, .interval = 30 },
+	{ .timeout = 500, .interval = 40 },
+	{ .timeout = 300, .interval = 40 },
 };
 
-static uint8_t notify_func(struct bt_conn *conn,
-			   struct bt_gatt_subscribe_params *params,
-			   const void *data, uint16_t length)
+static struct division divisions[NUM_DIVISIONS] = {
+	{ .mode = MODE_AUTO_REPEAT,   .buffer =  0 }, /* Main array */
+	{ .mode = MODE_AUTO_REPEAT,   .buffer =  0 }, /* Keypad */
+	{ .mode = MODE_AUTO_REPEAT,   .buffer =  1 }, /* Delete */
+	{ .mode = MODE_DOWN_ONLY,     .buffer = -1 }, /* Return and tab */
+	{ .mode = MODE_DOWN_ONLY,     .buffer = -1 }, /* Lock and compose */
+	{ .mode = MODE_DOWN_UP,       .buffer = -1 }, /* Shift and control */
+	{ .mode = MODE_AUTO_REPEAT,   .buffer =  1 }, /* Horizontal cursors */
+	{ .mode = MODE_AUTO_REPEAT,   .buffer =  1 }, /* Vertical cursors */
+	{ .mode = MODE_DOWN_UP,       .buffer = -1 }, /* Six editing keys */
+	{ .mode = MODE_DOWN_UP,       .buffer = -1 }, /* Function keys 1 */
+	{ .mode = MODE_DOWN_UP,       .buffer = -1 }, /* Function keys 2 */
+	{ .mode = MODE_DOWN_UP,       .buffer = -1 }, /* Function keys 3 */
+	{ .mode = MODE_DOWN_UP,       .buffer = -1 }, /* Function keys 4 */
+	{ .mode = MODE_DOWN_UP,       .buffer = -1 }, /* Function keys 5 */
+};
+
+/* hid_to_lk201_map */
+#include "lk201_map.c"
+
+static int
+hid_to_lk201(int hid)
 {
-	if (!data) {
-		LOG_INF("[UNSUBSCRIBED]");
-		params->value_handle = 0U;
-		return BT_GATT_ITER_STOP;
-	}
-
-	if (length == HID_REPORT_SIZE) {
-		lk201_handle_hid_report((const uint8_t *)data);
-//		const uint8_t *bytes = data;
-//		LOG_INF("%02x %02x %02x %02x %02x %02x %02x %02x",
-//		        bytes[0], bytes[1], bytes[2], bytes[3],
-//		        bytes[4], bytes[5], bytes[6], bytes[7]);
+	if (hid < sizeof(hid_to_lk201_map)) {
+		return hid_to_lk201_map[hid];
 	} else {
-		LOG_INF("[NOTIFICATION] data %p length %u", data, length);
+		return 0x00;
 	}
-
-	return BT_GATT_ITER_CONTINUE;
 }
 
-static uint16_t hids_handle = 0;
-
-static uint8_t discover_func(struct bt_conn *conn,
-			     const struct bt_gatt_attr *attr,
-			     struct bt_gatt_discover_params *params)
+static int
+lk201_keycode_to_division(int keycode)
 {
-	int err;
-
-	if (!attr) {
-		LOG_INF("Discover complete");
-		(void)memset(params, 0, sizeof(*params));
-		return BT_GATT_ITER_STOP;
-	}
-
-	LOG_INF("[ATTRIBUTE] handle %u", attr->handle);
-
-	if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_HIDS)) {
-		hids_handle = attr->handle;
-		memcpy(&discover_uuid, BT_UUID_HIDS_BOOT_KB_IN_REPORT, sizeof(discover_uuid));
-		discover_params.uuid = &discover_uuid.uuid;
-		discover_params.start_handle = hids_handle + 1;
-		discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
-
-		err = bt_gatt_discover(conn, &discover_params);
-		if (err) {
-			LOG_ERR("Discover failed (err %d)", err);
-		}
-	} else if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_HIDS_BOOT_KB_IN_REPORT)) {
-		memcpy(&discover_uuid, BT_UUID_HIDS_BOOT_KB_OUT_REPORT, sizeof(discover_uuid));
-		discover_params.uuid = &discover_uuid.uuid;
-		discover_params.start_handle = hids_handle + 1;
-		discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
-
-		err = bt_gatt_discover(conn, &discover_params);
-		if (err) {
-			LOG_ERR("Discover failed (err %d)", err);
-		}
-	} else if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_HIDS_BOOT_KB_OUT_REPORT)) {
-		memcpy(&discover_uuid, BT_UUID_HIDS_REPORT, sizeof(discover_uuid));
-		discover_params.uuid = &discover_uuid.uuid;
-		discover_params.start_handle = hids_handle + 1;
-		discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
-
-		err = bt_gatt_discover(conn, &discover_params);
-		if (err) {
-			LOG_ERR("Discover failed (err %d)", err);
-		}
-	} else if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_HIDS_REPORT)) {
-		memcpy(&discover_uuid, BT_UUID_GATT_CCC, sizeof(discover_uuid));
-		discover_params.uuid = &discover_uuid.uuid;
-		discover_params.start_handle = attr->handle + 1;
-		discover_params.type = BT_GATT_DISCOVER_DESCRIPTOR;
-		subscribe_params.value_handle = bt_gatt_attr_value_handle(attr);
-
-		err = bt_gatt_discover(conn, &discover_params);
-		if (err) {
-			LOG_ERR("Discover failed (err %d)", err);
-		}
+	if ((keycode >= 0x56) && (keycode <= 0x62)) {
+		return DIVISION_FUNCTION_KEYS_1;
+	} else if ((keycode >= 0x63) && (keycode <= 0x6E)) {
+		return DIVISION_FUNCTION_KEYS_2;
+	} else if ((keycode >= 0x6F) && (keycode <= 0x7A)) {
+		return DIVISION_FUNCTION_KEYS_3;
+	} else if ((keycode >= 0x7B) && (keycode <= 0x7D)) {
+		return DIVISION_FUNCTION_KEYS_4;
+	} else if ((keycode >= 0x7E) && (keycode <= 0x87)) {
+		return DIVISION_FUNCTION_KEYS_5;
+	} else if ((keycode >= 0x88) && (keycode <= 0x90)) {
+		return DIVISION_SIX_EDITING_KEYS;
+	} else if ((keycode >= 0x91) && (keycode <= 0xA5)) {
+		return DIVISION_KEYPAD;
+	} else if ((keycode >= 0xA6) && (keycode <= 0xA8)) {
+		return DIVISION_HORIZONTAL_CURSORS;
+	} else if ((keycode >= 0xA9) && (keycode <= 0xAC)) {
+		return DIVISION_VERTICAL_CURSORS;
+	} else if ((keycode >= 0xAD) && (keycode <= 0xAF)) {
+		return DIVISION_SHIFT_AND_CTRL;
+	} else if ((keycode >= 0xB0) && (keycode <= 0xB2)) {
+		return DIVISION_LOCK_AND_COMPOSE;
+	} else if (keycode == 0xBC) {
+		return DIVISION_DELETE;
+	} else if ((keycode >= 0xBD) && (keycode <= 0xBE)) {
+		return DIVISION_RETURN_AND_TAB;
+	} else if ((keycode >= 0xBF) && (keycode <= 0xFF)) {
+		return DIVISION_MAIN_ARRAY;
 	} else {
-		subscribe_params.notify = notify_func;
-		subscribe_params.value = BT_GATT_CCC_NOTIFY;
-		subscribe_params.ccc_handle = attr->handle;
-
-		err = bt_gatt_subscribe(conn, &subscribe_params);
-		if (err && err != -EALREADY) {
-			LOG_ERR("Subscribe failed (err %d)", err);
-		} else {
-			LOG_ERR("[SUBSCRIBED]");
-			rgb_led_set(&color_green);
-		}
-
-		return BT_GATT_ITER_STOP;
+		return -1;
 	}
-
-	return BT_GATT_ITER_STOP;
 }
 
-static bool eir_found(struct bt_data *data, void *user_data)
+static uint8_t last_report[HID_REPORT_SIZE] = { 0x00 };
+
+static bool is_in_report(int keycode, const uint8_t *report)
 {
-	bt_addr_le_t *addr = user_data;
-	int i;
-
-//	LOG_INF("[AD]: %u data_len %u", data->type, data->data_len);
-
-	switch (data->type) {
-	case BT_DATA_UUID16_SOME:
-	case BT_DATA_UUID16_ALL:
-		if (data->data_len % sizeof(uint16_t) != 0U) {
-			LOG_ERR("AD malformed");
+	for (int i = HID_REPORT_FIRST_KEY; i < HID_REPORT_SIZE; i++) {
+		if (keycode == report[i]) {
 			return true;
 		}
+	}
 
-		for (i = 0; i < data->data_len; i += sizeof(uint16_t)) {
-			struct bt_le_conn_param *param;
-			const struct bt_uuid *uuid;
-			uint16_t u16;
-			int err;
+	return false;
+}
 
-			memcpy(&u16, &data->data[i], sizeof(u16));
-			uuid = BT_UUID_DECLARE_16(sys_le16_to_cpu(u16));
-			if (bt_uuid_cmp(uuid, BT_UUID_HIDS)) {
-				continue;
-			}
+static void lk201_key_down(int keycode)
+{
+	if (keycode == 0x00) {
+		return;
+	}
 
-			err = bt_le_scan_stop();
-			if (err) {
-				LOG_ERR("Stop LE scan failed (err %d)", err);
-				continue;
-			}
+	/* TODO */
+}
 
-			param = BT_LE_CONN_PARAM_DEFAULT;
-			err = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN,
-						param, &default_conn);
-			if (err) {
-				LOG_ERR("Create conn failed (err %d)", err);
-				start_scan();
-			}
+static void lk201_key_up(int keycode)
+{
+	if (keycode == 0x00) {
+		return;
+	}
 
-			return false;
+	/* TODO */
+}
+
+void hid_report_cb(const uint8_t *this_report)
+{
+	for (int i = HID_REPORT_FIRST_KEY; i < HID_REPORT_SIZE; i++) {
+		if ((this_report[i] != 0x00) &&
+		    !is_in_report(this_report[i], last_report)) {
+			lk201_key_down(hid_to_lk201(this_report[i]));
+		}
+		if ((last_report[i] != 0x00) &&
+		    !is_in_report(last_report[i], this_report)) {
+			lk201_key_up(hid_to_lk201(last_report[i]));
 		}
 	}
 
-	return true;
-}
+	const uint8_t this_modifiers = this_report[0];
+	const uint8_t last_modifiers = last_report[0];
 
-static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
-			 struct net_buf_simple *ad)
-{
-	char dev[BT_ADDR_LE_STR_LEN];
-
-	bt_addr_le_to_str(addr, dev, sizeof(dev));
-//	LOG_INF("[DEVICE]: %s, AD evt type %u, AD data len %u, RSSI %i",
-//	        dev, type, ad->len, rssi);
-
-	/* We're only interested in connectable events */
-	if (type == BT_GAP_ADV_TYPE_ADV_IND ||
-	    type == BT_GAP_ADV_TYPE_ADV_DIRECT_IND) {
-		bt_data_parse(ad, eir_found, (void *)addr);
-	}
-}
-
-static void start_scan(void)
-{
-	int err;
-
-	/* Use active scanning and disable duplicate filtering to handle any
-	 * devices that might update their advertising data at runtime. */
-	struct bt_le_scan_param scan_param = {
-		.type       = BT_LE_SCAN_TYPE_ACTIVE,
-		.options    = BT_LE_SCAN_OPT_NONE,
-		.interval   = BT_GAP_SCAN_FAST_INTERVAL,
-		.window     = BT_GAP_SCAN_FAST_WINDOW,
-	};
-
-	err = bt_le_scan_start(&scan_param, device_found);
-	if (err) {
-		LOG_ERR("Scanning failed to start (err %d)", err);
-		return;
-	}
-
-	LOG_INF("Scanning successfully started");
-
-	rgb_led_set(&color_blue);
-}
-
-static void connected(struct bt_conn *conn, uint8_t conn_err)
-{
-	char addr[BT_ADDR_LE_STR_LEN];
-	int err;
-
-	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-
-	if (conn_err) {
-		LOG_ERR("Failed to connect to %s (%u)", addr, conn_err);
-
-		bt_conn_unref(default_conn);
-		default_conn = NULL;
-
-		start_scan();
-		return;
-	}
-
-	LOG_INF("Connected: %s", addr);
-
-	if (conn == default_conn) {
-		bt_conn_set_security(conn, BT_SECURITY_L2);
-
-		memcpy(&discover_uuid, BT_UUID_HIDS, sizeof(discover_uuid));
-		discover_params.uuid = &discover_uuid.uuid;
-		discover_params.func = discover_func;
-		discover_params.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
-		discover_params.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
-		discover_params.type = BT_GATT_DISCOVER_PRIMARY;
-
-		err = bt_gatt_discover(default_conn, &discover_params);
-		if (err) {
-			LOG_ERR("Discover failed(err %d)", err);
-			return;
+	for (int i = 0; i < 8; i++) {
+		int key = 0;
+		if ((i == 0) || (i == 4)) {
+			key = 0xAF; /* Ctrl */
+		} else if ((i == 1) || (i == 5)) {
+			key = 0xAE; /* Shift*/
+		} else {
+			continue;
+		}
+		if ((this_modifiers & (1 << i)) &&
+		    !(last_modifiers & (1 << i))) {
+			lk201_key_down(hid_to_lk201(key));
+		}
+		if ((last_modifiers & (1 << i)) &&
+		    !(this_modifiers & (1 << i))) {
+			lk201_key_up(hid_to_lk201(key));
 		}
 	}
+
+	memcpy(last_report, this_report, sizeof(last_report));
 }
 
-static void disconnected(struct bt_conn *conn, uint8_t reason)
-{
-	char addr[BT_ADDR_LE_STR_LEN];
-
-	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-
-	LOG_INF("Disconnected: %s (reason 0x%02x)", addr, reason);
-
-	if (default_conn != conn) {
-		return;
-	}
-
-	bt_conn_unref(default_conn);
-	default_conn = NULL;
-
-	start_scan();
+static void
+send_power_on_test_result(void) {
+	uart_poll_out(uart_dev, SPECIAL_KEYBOARD_ID_FIRMWARE);
+	uart_poll_out(uart_dev, SPECIAL_KEYBOARD_ID_HARDWARE);
+	uart_poll_out(uart_dev, 0x00); /* ERROR */
+	uart_poll_out(uart_dev, 0x00); /* KEYCODE */
 }
 
-BT_CONN_CB_DEFINE(conn_callbacks) = {
-	.connected = connected,
-	.disconnected = disconnected,
+struct message {
+	uint8_t size;
+	uint8_t buf[4];
 };
 
-int main(void)
+K_MSGQ_DEFINE(msgq, sizeof(struct message), 10, 4);
+
+static void
+serial_cb(const struct device *dev, void *user_data)
 {
-	if (device_is_ready(strip)) {
-		LOG_INF("Found LED strip device %s", strip->name);
-	} else {
-		LOG_ERR("LED strip device %s is not ready", strip->name);
+	struct message message = { 0 , { 0 } };
+
+	uint8_t c;
+
+	if (!uart_irq_update(uart_dev)) {
+		return;
 	}
 
-	/* Not sure why this needs to be called two times at first */
-	rgb_led_set(&color_black);
-	rgb_led_set(&color_black);
-
-	int err;
-	err = bt_enable(NULL);
-
-	if (IS_ENABLED(CONFIG_SETTINGS)) {
-		settings_load();
+	if (!uart_irq_rx_ready(uart_dev)) {
+		return;
 	}
 
-	bt_set_bondable(true);
+	/* read until FIFO empty */
+	while (uart_fifo_read(uart_dev, &c, 1) == 1) {
+		if (!(c & 0x80)) {
+			/* no more parameters */
+			message.buf[message.size] = c;
+			k_msgq_put(&msgq, &message, K_NO_WAIT);
+			message.size = 0;
+		} else if (message.size < (sizeof(message.buf) - 1)) {
+			message.buf[message.size++] = c;
+		}
+	}
+}
 
-	bt_passkey_set(123456);
+static void
+handle_message(struct message *messsage)
+{
+}
 
-	if (err) {
-		LOG_ERR("Bluetooth init failed (err %d)", err);
-		return 0;
+static void
+handle_messages(void)
+{
+	struct message message;
+
+	while (k_msgq_get(&msgq, &message, K_FOREVER) == 0) {
+		handle_message(&message);
+	}
+}
+
+int
+main(void)
+{
+	int ret;
+
+	if (!device_is_ready(uart_dev)) {
+		LOG_ERR("UART device not found");
+		return -1;
 	}
 
-	bt_conn_auth_info_cb_register(&auth_info_cb);
+	for (int i = 0; i < NUM_KEYS; i++) {
+		keys[i] = -1;
+	}
 
-	LOG_INF("Bluetooth initialized");
+	for (int i = 0; i < NUM_REPEAT_BUFFERS; i++) {
+		repeat_buffers[i].timeout = 300;
+		repeat_buffers[i].interval = 30;
+	}
 
-	start_scan();
+	send_power_on_test_result();
 
-	LOG_INF("Exiting");
+	ret = uart_irq_callback_user_data_set(uart_dev, serial_cb, NULL);
+	if (ret < 0) {
+		if (ret == -ENOTSUP) {
+			LOG_ERR("Interrupt-driven UART API support not enabled");
+		} else if (ret == -ENOSYS) {
+			LOG_ERR("UART device does not support interrupt-driven API");
+		} else {
+			LOG_ERR("Error setting UART callback: %d", ret);
+		}
+		return -1;
+	}
+	uart_irq_rx_enable(uart_dev);
 
-	lk201_main();
-
-	return 0;
+	ret = bluetooth_listen(hid_report_cb);
+	if (ret < 0) {
+		LOG_ERR("Bluetooth listening failed");
+		return -1;
+	}
 }
