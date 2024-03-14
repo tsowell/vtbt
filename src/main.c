@@ -355,5 +355,8 @@ int main(void)
 	start_scan();
 
 	LOG_INF("Exiting");
+
+	lk201_main();
+
 	return 0;
 }

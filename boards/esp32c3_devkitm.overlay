@@ -45,6 +45,9 @@
                 led-strip = &led_strip;
         };
 
+	chosen {
+		zephyr,vt-uart = &uart0;
+	};
 //	chosen {
 //		/delete-property/ zephyr,console;
 //	};
