@@ -9,8 +9,10 @@
 #include <zephyr/types.h>
 #include <stddef.h>
 #include <errno.h>
+#include <zephyr/logging/log.h>
 #include <zephyr/kernel.h>
-#include <zephyr/sys/printk.h>
+
+#include <zephyr/drivers/uart.h>
 
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
@@ -22,8 +24,13 @@
 
 #include <zephyr/drivers/led_strip.h>
 
+#include "config.h"
+#include "lk201.h"
+
 #define STRIP_NODE              DT_ALIAS(led_strip)
 #define STRIP_NUM_PIXELS        DT_PROP(DT_ALIAS(led_strip), chain_length)
+
+LOG_MODULE_REGISTER(main, CONFIG_LOG_DEFAULT_LEVEL);
 
 struct led_rgb pixels[STRIP_NUM_PIXELS];
 
@@ -42,7 +49,7 @@ static void rgb_led_set(const struct led_rgb *color)
 	}
 	int rc = led_strip_update_rgb(strip, pixels, STRIP_NUM_PIXELS);
 	if (rc) {
-		printk("Couldn't update strip: %d\n", rc);
+		LOG_ERR("Couldn't update strip: %d", rc);
 	}
 }
 
@@ -70,16 +77,20 @@ static uint8_t notify_func(struct bt_conn *conn,
 			   const void *data, uint16_t length)
 {
 	if (!data) {
-		printk("[UNSUBSCRIBED]\n");
+		LOG_INF("[UNSUBSCRIBED]");
 		params->value_handle = 0U;
 		return BT_GATT_ITER_STOP;
 	}
 
-	printk("[NOTIFICATION] data %p length %u\n", data, length);
-	for (int i = 0; i < length; i++) {
-		printk("%02x", ((const char *)data)[i]);
+	if (length == HID_REPORT_SIZE) {
+		lk201_handle_hid_report((const uint8_t *)data);
+//		const uint8_t *bytes = data;
+//		LOG_INF("%02x %02x %02x %02x %02x %02x %02x %02x",
+//		        bytes[0], bytes[1], bytes[2], bytes[3],
+//		        bytes[4], bytes[5], bytes[6], bytes[7]);
+	} else {
+		LOG_INF("[NOTIFICATION] data %p length %u", data, length);
 	}
-	printk("\n");
 
 	return BT_GATT_ITER_CONTINUE;
 }
@@ -93,12 +104,12 @@ static uint8_t discover_func(struct bt_conn *conn,
 	int err;
 
 	if (!attr) {
-		printk("Discover complete\n");
+		LOG_INF("Discover complete");
 		(void)memset(params, 0, sizeof(*params));
 		return BT_GATT_ITER_STOP;
 	}
 
-	printk("[ATTRIBUTE] handle %u\n", attr->handle);
+	LOG_INF("[ATTRIBUTE] handle %u", attr->handle);
 
 	if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_HIDS)) {
 		hids_handle = attr->handle;
@@ -109,7 +120,7 @@ static uint8_t discover_func(struct bt_conn *conn,
 
 		err = bt_gatt_discover(conn, &discover_params);
 		if (err) {
-			printk("Discover failed (err %d)\n", err);
+			LOG_ERR("Discover failed (err %d)", err);
 		}
 	} else if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_HIDS_BOOT_KB_IN_REPORT)) {
 		memcpy(&discover_uuid, BT_UUID_HIDS_BOOT_KB_OUT_REPORT, sizeof(discover_uuid));
@@ -119,7 +130,7 @@ static uint8_t discover_func(struct bt_conn *conn,
 
 		err = bt_gatt_discover(conn, &discover_params);
 		if (err) {
-			printk("Discover failed (err %d)\n", err);
+			LOG_ERR("Discover failed (err %d)", err);
 		}
 	} else if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_HIDS_BOOT_KB_OUT_REPORT)) {
 		memcpy(&discover_uuid, BT_UUID_HIDS_REPORT, sizeof(discover_uuid));
@@ -129,7 +140,7 @@ static uint8_t discover_func(struct bt_conn *conn,
 
 		err = bt_gatt_discover(conn, &discover_params);
 		if (err) {
-			printk("Discover failed (err %d)\n", err);
+			LOG_ERR("Discover failed (err %d)", err);
 		}
 	} else if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_HIDS_REPORT)) {
 		memcpy(&discover_uuid, BT_UUID_GATT_CCC, sizeof(discover_uuid));
@@ -140,7 +151,7 @@ static uint8_t discover_func(struct bt_conn *conn,
 
 		err = bt_gatt_discover(conn, &discover_params);
 		if (err) {
-			printk("Discover failed (err %d)\n", err);
+			LOG_ERR("Discover failed (err %d)", err);
 		}
 	} else {
 		subscribe_params.notify = notify_func;
@@ -149,9 +160,9 @@ static uint8_t discover_func(struct bt_conn *conn,
 
 		err = bt_gatt_subscribe(conn, &subscribe_params);
 		if (err && err != -EALREADY) {
-			printk("Subscribe failed (err %d)\n", err);
+			LOG_ERR("Subscribe failed (err %d)", err);
 		} else {
-			printk("[SUBSCRIBED]\n");
+			LOG_ERR("[SUBSCRIBED]");
 			rgb_led_set(&color_green);
 		}
 
@@ -166,13 +177,13 @@ static bool eir_found(struct bt_data *data, void *user_data)
 	bt_addr_le_t *addr = user_data;
 	int i;
 
-	printk("[AD]: %u data_len %u\n", data->type, data->data_len);
+//	LOG_INF("[AD]: %u data_len %u", data->type, data->data_len);
 
 	switch (data->type) {
 	case BT_DATA_UUID16_SOME:
 	case BT_DATA_UUID16_ALL:
 		if (data->data_len % sizeof(uint16_t) != 0U) {
-			printk("AD malformed\n");
+			LOG_ERR("AD malformed");
 			return true;
 		}
 
@@ -190,7 +201,7 @@ static bool eir_found(struct bt_data *data, void *user_data)
 
 			err = bt_le_scan_stop();
 			if (err) {
-				printk("Stop LE scan failed (err %d)\n", err);
+				LOG_ERR("Stop LE scan failed (err %d)", err);
 				continue;
 			}
 
@@ -198,7 +209,7 @@ static bool eir_found(struct bt_data *data, void *user_data)
 			err = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN,
 						param, &default_conn);
 			if (err) {
-				printk("Create conn failed (err %d)\n", err);
+				LOG_ERR("Create conn failed (err %d)", err);
 				start_scan();
 			}
 
@@ -215,8 +226,8 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 	char dev[BT_ADDR_LE_STR_LEN];
 
 	bt_addr_le_to_str(addr, dev, sizeof(dev));
-	printk("[DEVICE]: %s, AD evt type %u, AD data len %u, RSSI %i\n",
-	       dev, type, ad->len, rssi);
+//	LOG_INF("[DEVICE]: %s, AD evt type %u, AD data len %u, RSSI %i",
+//	        dev, type, ad->len, rssi);
 
 	/* We're only interested in connectable events */
 	if (type == BT_GAP_ADV_TYPE_ADV_IND ||
@@ -240,11 +251,11 @@ static void start_scan(void)
 
 	err = bt_le_scan_start(&scan_param, device_found);
 	if (err) {
-		printk("Scanning failed to start (err %d)\n", err);
+		LOG_ERR("Scanning failed to start (err %d)", err);
 		return;
 	}
 
-	printk("Scanning successfully started\n");
+	LOG_INF("Scanning successfully started");
 
 	rgb_led_set(&color_blue);
 }
@@ -257,7 +268,7 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
 	if (conn_err) {
-		printk("Failed to connect to %s (%u)\n", addr, conn_err);
+		LOG_ERR("Failed to connect to %s (%u)", addr, conn_err);
 
 		bt_conn_unref(default_conn);
 		default_conn = NULL;
@@ -266,7 +277,7 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 		return;
 	}
 
-	printk("Connected: %s\n", addr);
+	LOG_INF("Connected: %s", addr);
 
 	if (conn == default_conn) {
 		bt_conn_set_security(conn, BT_SECURITY_L2);
@@ -280,7 +291,7 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 
 		err = bt_gatt_discover(default_conn, &discover_params);
 		if (err) {
-			printk("Discover failed(err %d)\n", err);
+			LOG_ERR("Discover failed(err %d)", err);
 			return;
 		}
 	}
@@ -292,7 +303,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	printk("Disconnected: %s (reason 0x%02x)\n", addr, reason);
+	LOG_INF("Disconnected: %s (reason 0x%02x)", addr, reason);
 
 	if (default_conn != conn) {
 		return;
@@ -312,9 +323,9 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 int main(void)
 {
 	if (device_is_ready(strip)) {
-		printk("Found LED strip device %s\n", strip->name);
+		LOG_INF("Found LED strip device %s", strip->name);
 	} else {
-		printk("LED strip device %s is not ready\n", strip->name);
+		LOG_ERR("LED strip device %s is not ready", strip->name);
 	}
 
 	/* Not sure why this needs to be called two times at first */
@@ -333,14 +344,16 @@ int main(void)
 	bt_passkey_set(123456);
 
 	if (err) {
-		printk("Bluetooth init failed (err %d)\n", err);
+		LOG_ERR("Bluetooth init failed (err %d)", err);
 		return 0;
 	}
 
 	bt_conn_auth_info_cb_register(&auth_info_cb);
 
-	printk("Bluetooth initialized\n");
+	LOG_INF("Bluetooth initialized");
 
 	start_scan();
+
+	LOG_INF("Exiting");
 	return 0;
 }

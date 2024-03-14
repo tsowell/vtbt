@@ -7,7 +7,7 @@
 #include <zephyr/dt-bindings/led/led.h>
 
 &uart0 {
-	current-speed = <4800>;
+//	current-speed = <4800>;
 };
 
 &spi2 {
@@ -44,4 +44,8 @@
         aliases {
                 led-strip = &led_strip;
         };
+
+//	chosen {
+//		/delete-property/ zephyr,console;
+//	};
 };
