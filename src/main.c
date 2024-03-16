@@ -119,6 +119,13 @@ static bool is_in_report(int keycode, const uint8_t *report)
 
 K_MUTEX_DEFINE(uart_tx_mutex);
 
+static void uart_tx_code(unsigned char code)
+{
+	k_mutex_lock(&uart_tx_mutex, K_FOREVER);
+	uart_poll_out(uart_dev, code);
+	k_mutex_unlock(&uart_tx_mutex);
+}
+
 static void lk201_key_down(int keycode)
 {
 	if (keycode == 0x00) {
@@ -126,10 +133,7 @@ static void lk201_key_down(int keycode)
 	}
 
 	/* TODO */
-	k_mutex_lock(&uart_tx_mutex, K_FOREVER);
-	/* All Ups */
-	uart_poll_out(uart_dev, keycode);
-	k_mutex_unlock(&uart_tx_mutex);
+	uart_tx_code(keycode);
 }
 
 static void lk201_key_up(int keycode)
@@ -139,10 +143,7 @@ static void lk201_key_up(int keycode)
 	}
 
 	/* TODO */
-	k_mutex_lock(&uart_tx_mutex, K_FOREVER);
-	/* All Ups */
-	uart_poll_out(uart_dev, 0xB3);
-	k_mutex_unlock(&uart_tx_mutex);
+	uart_tx_code(SPECIAL_ALL_UPS);
 }
 
 void hid_report_cb(const uint8_t *this_report)
@@ -294,49 +295,146 @@ sound_bell(void)
 	k_timer_start(&beeper_off_timer, K_MSEC(125), K_FOREVER);
 }
 
+static int
+handle_jump_to_power_up(struct message *message)
+{
+	send_power_on_test_result();
+
+	return 0;
+}
+
+static int
+handle_light_leds(struct message *message)
+{
+	if (message->size != 2) {
+		return SPECIAL_INPUT_ERROR;
+	}
+
+	for (int i = 0; i < 4; i++) {
+		if (message->buf[1] & (1 << i)) {
+			gpio_pin_set_dt(&leds[i], 1);
+		}
+	}
+
+	return SPECIAL_MODE_CHANGE_ACK;
+}
+
+static int
+handle_turn_off_leds(struct message *message)
+{
+	if (message->size != 2) {
+		return SPECIAL_INPUT_ERROR;
+	}
+
+	for (int i = 0; i < 4; i++) {
+		if (message->buf[1] & (1 << i)) {
+			gpio_pin_set_dt(&leds[i], 0);
+		}
+	}
+
+	return SPECIAL_MODE_CHANGE_ACK;
+}
+
+static int
+handle_disable_keyclick(struct message *message)
+{
+	keyclick_volume = -1;
+
+	return SPECIAL_MODE_CHANGE_ACK;
+}
+
+static int
+handle_enable_keyclick_set_volume(struct message *message)
+{
+	if (message->size != 2) {
+		return SPECIAL_INPUT_ERROR;
+	}
+
+	keyclick_volume = message->buf[1] & 0x07;
+
+	return SPECIAL_MODE_CHANGE_ACK;
+}
+
+static int
+handle_sound_keyclick(struct message *message)
+{
+	sound_keyclick();
+
+	return SPECIAL_MODE_CHANGE_ACK;
+}
+
+static int
+handle_disable_bell(struct message *message)
+{
+	bell_volume = -1;
+
+	return SPECIAL_MODE_CHANGE_ACK;
+}
+
+static int
+handle_enable_bell_set_volume(struct message *message)
+{
+	if (message->size != 2) {
+		return SPECIAL_INPUT_ERROR;
+	}
+
+	bell_volume = message->buf[1] & 0x07;
+
+	return SPECIAL_MODE_CHANGE_ACK;
+}
+
+static int
+handle_sound_bell(struct message *message)
+{
+	sound_bell();
+
+	return SPECIAL_MODE_CHANGE_ACK;
+}
+
 static void
 handle_message(struct message *message)
 {
-	if ((message->size == 1) && (message->buf[0] == 0xFD)) {
-		send_power_on_test_result();
-	} else {
-		k_mutex_lock(&uart_tx_mutex, K_FOREVER);
-		uart_poll_out(uart_dev, 0xBA);
-		k_mutex_unlock(&uart_tx_mutex);
+	if (message->size == 0) {
+		return;
 	}
 
-	if ((message->size == 2) && (message->buf[0] == 0x11)) {
-		/* LEDS off */
-		for (int i = 0; i < 4; i++) {
-			if (message->buf[1] & (1 << i)) {
-				gpio_pin_set_dt(&leds[i], 0);
-			}
-		}
-	} else if ((message->size == 2) && (message->buf[0] == 0x13)) {
-		/* LEDS on */
-		for (int i = 0; i < 4; i++) {
-			if (message->buf[1] & (1 << i)) {
-				gpio_pin_set_dt(&leds[i], 1);
-			}
-		}
-	} else if ((message->size == 1) && (message->buf[0] == 0x99)) {
-		/* Disable keyclick */
-		keyclick_volume = -1;
-	} else if ((message->size == 2) && (message->buf[0] == 0x1B)) {
-		/* Enable keyclick, set volume */
-		keyclick_volume = message->buf[1] & 0x07;
-	} else if ((message->size == 1) && (message->buf[0] == 0x9F)) {
-		/* Sound keyclick */
-		sound_keyclick();
-	} else if ((message->size == 1) && (message->buf[0] == 0xA1)) {
-		/* Disable bell */
-		bell_volume = -1;
-	} else if ((message->size == 2) && (message->buf[0] == 0x23)) {
-		/* Enable keyclick, set volume */
-		bell_volume = message->buf[1] & 0x07;
-	} else if ((message->size == 1) && (message->buf[0] == 0xA7)) {
-		/* Sound keyclick */
-		sound_bell();
+	int ret = 0;
+
+	switch (message->buf[0]) {
+		/* INDICATORS */
+		case COMMAND_LIGHT_LEDS:
+			ret = handle_light_leds(message);
+			break;
+		case COMMAND_TURN_OFF_LEDS:
+			ret = handle_turn_off_leds(message);
+			break;
+		/* AUDIO */
+		case COMMAND_DISABLE_KEYCLICK:
+			ret = handle_disable_keyclick(message);
+			break;
+		case COMMAND_ENABLE_KEYCLICK_SET_VOLUME:
+			ret = handle_enable_keyclick_set_volume(message);
+			break;
+		case COMMAND_SOUND_KEYCLICK:
+			ret = handle_sound_keyclick(message);
+			break;
+		case COMMAND_DISABLE_BELL:
+			ret = handle_disable_bell(message);
+			break;
+		case COMMAND_ENABLE_BELL_SET_VOLUME:
+			ret = handle_enable_bell_set_volume(message);
+			break;
+		case COMMAND_SOUND_BELL:
+			ret = handle_sound_bell(message);
+			break;
+		/* OTHER */
+		case COMMAND_JUMP_TO_POWER_UP:
+			ret = handle_jump_to_power_up(message);
+			break;
+	}
+
+	if (ret > 0) {
+		uart_tx_code(ret);
 	}
 }
 

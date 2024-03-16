@@ -54,15 +54,45 @@
 #define SPECIAL_MODE_CHANGE_ACK             0xba
 #define SPECIAL_RESERVED                    0x7f
 
+/* FLOW CONTROL */
+#define COMMAND_RESUME_KEYOARD_TRANSMISSION          0x8b
+#define COMMAND_INHIBIT_KEYBOARD_TRANSMISSION        0x89
+
+/* INDICATORS */
+#define COMMAND_LIGHT_LEDS                           0x13
+#define COMMAND_TURN_OFF_LEDS                        0x11
+
+/* AUDIO */
+#define COMMAND_DISABLE_KEYCLICK                     0x99
+#define COMMAND_ENABLE_KEYCLICK_SET_VOLUME           0x1b
+#define COMMAND_DISABLE_CTRL_KEYCLICK                0xb9
+#define COMMAND_ENABLE_CTRL_KEYCLICK                 0xbb
+#define COMMAND_SOUND_KEYCLICK                       0x9f
+#define COMMAND_DISABLE_BELL                         0xa1
+#define COMMAND_ENABLE_BELL_SET_VOLUME               0x23
+#define COMMAND_SOUND_BELL                           0xa7
+
+/* AUTO-REPEAT */
+#define COMMAND_TEMPORARY_AUTO_REPEAT_INHIBIT        0xc1
+#define COMMAND_ENABLE_AUTO_REPEAT_ACROSS_KEYBOARD   0xe3
+#define COMMAND_DISABLE_AUTO_REPEAT_ACROSS_KEYBOARD  0xe1
+#define COMMAND_CHANGE_ALL_AUTO_REPEAT_TO_DOWN_ONLY  0xd9
+
+/* OTHER */
+#define COMMAND_REQUEST_KEYBOARD_ID                  0xab
+#define COMMAND_JUMP_TO_POWER_UP                     0xfd
+#define COMMAND_JUMP_TO_TEST_MODE                    0xcb
+#define COMMAND_REINSTATE_DEFAULTS                   0xd3
+
 /* Power-up transmission
  * Byte 1: KBID (firmware) 0x01
  * Byte 2: KBID (hardware) 0x00
- * Byte 3: ERROR (0x3D or 0x3E)
+ * Byte 3: ERROR (0x3d or 0x3e)
  * Byte 4: KEYCODE (0x00 for no key down
  */
 
-#define LK201_SHIFT  0xAE
-#define LK201_CTRL   0xAF
+#define LK201_SHIFT  0xae
+#define LK201_CTRL   0xaf
 
 struct repeat_buffer {
 	/* Milliseconds before auto-repeating */
