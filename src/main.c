@@ -1,8 +1,10 @@
 #include <string.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/drivers/pwm.h>
 
 #include "lk201.h"
 #include "bluetooth.h"
@@ -11,6 +13,19 @@
 #define UART_DEVICE_NODE DT_CHOSEN(zephyr_vt_uart)
 
 static const struct device *const uart_dev = DEVICE_DT_GET(UART_DEVICE_NODE);
+
+static const struct gpio_dt_spec uart_tx_enable =
+	GPIO_DT_SPEC_GET_OR(DT_NODELABEL(uart_tx_enable), gpios, {0});
+
+#define NUM_LEDS 4
+static const struct gpio_dt_spec leds[NUM_LEDS] = {
+	GPIO_DT_SPEC_GET_OR(DT_NODELABEL(led0), gpios, {0}),
+	GPIO_DT_SPEC_GET_OR(DT_NODELABEL(led1), gpios, {0}),
+	GPIO_DT_SPEC_GET_OR(DT_NODELABEL(led2), gpios, {0}),
+	GPIO_DT_SPEC_GET_OR(DT_NODELABEL(led3), gpios, {0}),
+};
+
+static const struct pwm_dt_spec pwm_beeper0 = PWM_DT_SPEC_GET(DT_ALIAS(pwm_beeper0));
 
 LOG_MODULE_REGISTER(lk201, CONFIG_LOG_DEFAULT_LEVEL);
 
@@ -171,7 +186,7 @@ struct message {
 	uint8_t buf[4];
 };
 
-K_MSGQ_DEFINE(msgq, sizeof(struct message), 10, 4);
+K_MSGQ_DEFINE(uart_msgq, sizeof(struct message), 10, 4);
 
 static void
 serial_cb(const struct device *dev, void *user_data)
@@ -190,10 +205,10 @@ serial_cb(const struct device *dev, void *user_data)
 
 	/* read until FIFO empty */
 	while (uart_fifo_read(uart_dev, &c, 1) == 1) {
-		if (!(c & 0x80)) {
+		if (c & 0x80) {
 			/* no more parameters */
-			message.buf[message.size] = c;
-			k_msgq_put(&msgq, &message, K_NO_WAIT);
+			message.buf[message.size++] = c;
+			k_msgq_put(&uart_msgq, &message, K_NO_WAIT);
 			message.size = 0;
 		} else if (message.size < (sizeof(message.buf) - 1)) {
 			message.buf[message.size++] = c;
@@ -202,8 +217,29 @@ serial_cb(const struct device *dev, void *user_data)
 }
 
 static void
-handle_message(struct message *messsage)
+handle_message(struct message *message)
 {
+	if ((message->size == 1) && (message->buf[0] == 0xFD)) {
+		send_power_on_test_result();
+	} else {
+		uart_poll_out(uart_dev, 0xBA);
+	}
+
+	if ((message->size == 2) && (message->buf[0] == 0x11)) {
+		/* LEDS off */
+		for (int i = 0; i < 4; i++) {
+			if (message->buf[1] & (1 << i)) {
+				gpio_pin_set_dt(&leds[i], 0);
+			}
+		}
+	} else if ((message->size == 2) && (message->buf[0] == 0x13)) {
+		/* LEDS on */
+		for (int i = 0; i < 4; i++) {
+			if (message->buf[1] & (1 << i)) {
+				gpio_pin_set_dt(&leds[i], 1);
+			}
+		}
+	}
 }
 
 static void
@@ -211,7 +247,7 @@ handle_messages(void)
 {
 	struct message message;
 
-	while (k_msgq_get(&msgq, &message, K_FOREVER) == 0) {
+	while (k_msgq_get(&uart_msgq, &message, K_FOREVER) == 0) {
 		handle_message(&message);
 	}
 }
@@ -225,6 +261,36 @@ main(void)
 		LOG_ERR("UART device not found");
 		return -1;
 	}
+
+	if (!gpio_is_ready_dt(&uart_tx_enable)) {
+		LOG_ERR("UART TX enable pin GPIO port is not ready.");
+		return -1;
+	}
+
+	ret = gpio_pin_configure_dt(&uart_tx_enable, GPIO_OUTPUT_ACTIVE);
+	if (ret != 0) {
+		LOG_ERR("Configuring GPIO pin failed: %d", ret);
+		return -1;
+	}
+
+	for (int i = 0; i < NUM_LEDS; i++) {
+		if (!gpio_is_ready_dt(&leds[i])) {
+			LOG_ERR("led%d pin GPIO port is not ready.", i);
+			return -1;
+		}
+
+		ret = gpio_pin_configure_dt(&leds[i], GPIO_OUTPUT_INACTIVE);
+		if (ret != 0) {
+			LOG_ERR("Configuring GPIO pin failed: %d", ret);
+			return -1;
+		}
+	}
+
+        if (!pwm_is_ready_dt(&pwm_beeper0)) {
+                printk("Error: PWM device %s is not ready\n",
+                       pwm_beeper0.dev->name);
+                return 0;
+        }
 
 	for (int i = 0; i < NUM_KEYS; i++) {
 		keys[i] = -1;
@@ -255,4 +321,11 @@ main(void)
 		LOG_ERR("Bluetooth listening failed");
 		return -1;
 	}
+
+/*	ret = pwm_set_dt(&pwm_beeper0, pwm_beeper0.period, pwm_beeper0.period / 2U);
+	if (ret) {
+		LOG_ERR("Error %d: failed to set pulse width", ret);
+	}*/
+
+	handle_messages();
 }
