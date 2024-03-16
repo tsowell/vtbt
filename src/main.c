@@ -31,14 +31,16 @@ LOG_MODULE_REGISTER(lk201, CONFIG_LOG_DEFAULT_LEVEL);
 
 static int keys[NUM_KEYS];
 
-static struct repeat_buffer repeat_buffers[NUM_REPEAT_BUFFERS] = {
+static struct repeat_buffer repeat_buffers[NUM_REPEAT_BUFFERS];
+static struct repeat_buffer repeat_buffers_default[NUM_REPEAT_BUFFERS] = {
 	{ .timeout = 500, .interval = 30 },
 	{ .timeout = 300, .interval = 30 },
 	{ .timeout = 500, .interval = 40 },
 	{ .timeout = 300, .interval = 40 },
 };
 
-static struct division divisions[NUM_DIVISIONS] = {
+static struct division divisions[NUM_DIVISIONS];
+static struct division divisions_default[NUM_DIVISIONS] = {
 	{ .mode = MODE_AUTO_REPEAT,   .buffer =  0 }, /* Main array */
 	{ .mode = MODE_AUTO_REPEAT,   .buffer =  0 }, /* Keypad */
 	{ .mode = MODE_AUTO_REPEAT,   .buffer =  1 }, /* Delete */
@@ -295,12 +297,13 @@ sound_bell(void)
 	k_timer_start(&beeper_off_timer, K_MSEC(125), K_FOREVER);
 }
 
-static int
-handle_jump_to_power_up(struct message *message)
+static void
+init_defaults(void)
 {
-	send_power_on_test_result();
-
-	return 0;
+	memcpy(repeat_buffers, repeat_buffers_default, sizeof(repeat_buffers));
+	memcpy(divisions, divisions_default, sizeof(divisions));
+	keyclick_volume = -1;
+	bell_volume = -1;
 }
 
 static int
@@ -391,6 +394,22 @@ handle_sound_bell(struct message *message)
 	return SPECIAL_MODE_CHANGE_ACK;
 }
 
+static int
+handle_jump_to_power_up(struct message *message)
+{
+	send_power_on_test_result();
+
+	return 0;
+}
+
+static int
+handle_reinstate_defaults(struct message *message)
+{
+	init_defaults();
+
+	return 0;
+}
+
 static void
 handle_message(struct message *message)
 {
@@ -431,6 +450,9 @@ handle_message(struct message *message)
 		case COMMAND_JUMP_TO_POWER_UP:
 			ret = handle_jump_to_power_up(message);
 			break;
+		case COMMAND_REINSTATE_DEFAULTS:
+			ret = handle_reinstate_defaults(message);
+			break;
 	}
 
 	if (ret > 0) {
@@ -452,6 +474,8 @@ int
 main(void)
 {
 	int ret;
+
+	init_defaults();
 
 	if (!device_is_ready(uart_dev)) {
 		LOG_ERR("UART device not found");
