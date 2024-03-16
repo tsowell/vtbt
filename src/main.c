@@ -6,26 +6,12 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/pwm.h>
 
-#include "lk201.h"
-#include "bluetooth.h"
 #include "config.h"
-
-#define UART_DEVICE_NODE DT_CHOSEN(zephyr_vt_uart)
-
-static const struct device *const uart_dev = DEVICE_DT_GET(UART_DEVICE_NODE);
-
-static const struct gpio_dt_spec uart_tx_enable =
-	GPIO_DT_SPEC_GET_OR(DT_NODELABEL(uart_tx_enable), gpios, {0});
-
-#define NUM_LEDS 4
-static const struct gpio_dt_spec leds[NUM_LEDS] = {
-	GPIO_DT_SPEC_GET_OR(DT_NODELABEL(led0), gpios, {0}),
-	GPIO_DT_SPEC_GET_OR(DT_NODELABEL(led1), gpios, {0}),
-	GPIO_DT_SPEC_GET_OR(DT_NODELABEL(led2), gpios, {0}),
-	GPIO_DT_SPEC_GET_OR(DT_NODELABEL(led3), gpios, {0}),
-};
-
-static const struct pwm_dt_spec pwm_beeper0 = PWM_DT_SPEC_GET(DT_ALIAS(pwm_beeper0));
+#include "lk201.h"
+#include "beeper.h"
+#include "bluetooth.h"
+#include "leds.h"
+#include "uart.h"
 
 LOG_MODULE_REGISTER(lk201, CONFIG_LOG_DEFAULT_LEVEL);
 
@@ -119,15 +105,6 @@ static bool is_in_report(int keycode, const uint8_t *report)
 	return false;
 }
 
-K_MUTEX_DEFINE(uart_tx_mutex);
-
-static void uart_tx_code(unsigned char code)
-{
-	k_mutex_lock(&uart_tx_mutex, K_FOREVER);
-	uart_poll_out(uart_dev, code);
-	k_mutex_unlock(&uart_tx_mutex);
-}
-
 static void lk201_key_down(int keycode)
 {
 	if (keycode == 0x00) {
@@ -135,7 +112,7 @@ static void lk201_key_down(int keycode)
 	}
 
 	/* TODO */
-	uart_tx_code(keycode);
+	uart_write_byte(keycode);
 }
 
 static void lk201_key_up(int keycode)
@@ -145,7 +122,7 @@ static void lk201_key_up(int keycode)
 	}
 
 	/* TODO */
-	uart_tx_code(SPECIAL_ALL_UPS);
+	uart_write_byte(SPECIAL_ALL_UPS);
 }
 
 void hid_report_cb(const uint8_t *this_report)
@@ -188,12 +165,13 @@ void hid_report_cb(const uint8_t *this_report)
 
 static void
 send_power_on_test_result(void) {
-	k_mutex_lock(&uart_tx_mutex, K_FOREVER);
-	uart_poll_out(uart_dev, SPECIAL_KEYBOARD_ID_FIRMWARE);
-	uart_poll_out(uart_dev, SPECIAL_KEYBOARD_ID_HARDWARE);
-	uart_poll_out(uart_dev, 0x00); /* ERROR */
-	uart_poll_out(uart_dev, 0x00); /* KEYCODE */
-	k_mutex_unlock(&uart_tx_mutex);
+	const unsigned char test_result[] = {
+		SPECIAL_KEYBOARD_ID_FIRMWARE,
+		SPECIAL_KEYBOARD_ID_HARDWARE,
+		0x00, /* ERROR */
+		0x00, /* KEYCODE */
+	};
+	uart_write(test_result, sizeof(test_result));
 }
 
 struct message {
@@ -203,98 +181,19 @@ struct message {
 
 K_MSGQ_DEFINE(uart_msgq, sizeof(struct message), 10, 4);
 
-static void
-serial_cb(const struct device *dev, void *user_data)
-{
-	struct message message = { 0 , { 0 } };
-
-	uint8_t c;
-
-	if (!uart_irq_update(uart_dev)) {
-		return;
-	}
-
-	if (!uart_irq_rx_ready(uart_dev)) {
-		return;
-	}
-
-	/* read until FIFO empty */
-	while (uart_fifo_read(uart_dev, &c, 1) == 1) {
-		if (c & 0x80) {
-			/* no more parameters */
-			message.buf[message.size++] = c;
-			k_msgq_put(&uart_msgq, &message, K_NO_WAIT);
-			message.size = 0;
-		} else if (message.size < (sizeof(message.buf) - 1)) {
-			message.buf[message.size++] = c;
-		}
-	}
-}
-
-static int keyclick_volume = -1;
-static int bell_volume = -1;
-
-K_MUTEX_DEFINE(beeper_mutex);
+static struct message callback_message = { 0 , { 0 } };
 
 static void
-beeper_on(int volume)
+uart_callback(uint8_t c)
 {
-	const uint32_t pulse = (pwm_beeper0.period / 2U) * (8 - volume) / 8;
-	k_mutex_lock(&beeper_mutex, K_FOREVER);
-	int ret = pwm_set_dt(&pwm_beeper0, pwm_beeper0.period, pulse);
-	k_mutex_unlock(&beeper_mutex);
-	if (ret) {
-		LOG_ERR("Error %d: failed to set pulse width", ret);
+	if (c & 0x80) {
+		/* no more parameters */
+		callback_message.buf[callback_message.size++] = c;
+		k_msgq_put(&uart_msgq, &callback_message, K_NO_WAIT);
+		callback_message.size = 0;
+	} else if (callback_message.size < (sizeof(callback_message.buf) - 1)) {
+		callback_message.buf[callback_message.size++] = c;
 	}
-}
-
-static void
-beeper_off(void)
-{
-	k_mutex_lock(&beeper_mutex, K_FOREVER);
-	int ret = pwm_set_dt(&pwm_beeper0, pwm_beeper0.period, 0);
-	k_mutex_unlock(&beeper_mutex);
-	if (ret) {
-		LOG_ERR("Error %d: failed to set pulse width", ret);
-	}
-}
-
-void beeper_off_work_handler(struct k_work *work)
-{
-	beeper_off();
-}
-
-K_WORK_DEFINE(beeper_off_work, beeper_off_work_handler);
-
-void beeper_off_timer_handler(struct k_timer *dummy)
-{
-    k_work_submit(&beeper_off_work);
-}
-
-K_TIMER_DEFINE(beeper_off_timer, beeper_off_timer_handler, NULL);
-
-static void
-sound_keyclick(void)
-{
-	if (keyclick_volume < 0) {
-		return;
-	}
-
-	beeper_on(keyclick_volume);
-
-	k_timer_start(&beeper_off_timer, K_MSEC(2), K_FOREVER);
-}
-
-static void
-sound_bell(void)
-{
-	if (bell_volume < 0) {
-		return;
-	}
-
-	beeper_on(bell_volume);
-
-	k_timer_start(&beeper_off_timer, K_MSEC(125), K_FOREVER);
 }
 
 static void
@@ -302,8 +201,8 @@ init_defaults(void)
 {
 	memcpy(repeat_buffers, repeat_buffers_default, sizeof(repeat_buffers));
 	memcpy(divisions, divisions_default, sizeof(divisions));
-	keyclick_volume = -1;
-	bell_volume = -1;
+	beeper_set_keyclick_volume(-1);
+	beeper_set_bell_volume(-1);
 }
 
 static int
@@ -315,7 +214,7 @@ handle_light_leds(struct message *message)
 
 	for (int i = 0; i < 4; i++) {
 		if (message->buf[1] & (1 << i)) {
-			gpio_pin_set_dt(&leds[i], 1);
+			leds_set(i, 1);
 		}
 	}
 
@@ -331,7 +230,7 @@ handle_turn_off_leds(struct message *message)
 
 	for (int i = 0; i < 4; i++) {
 		if (message->buf[1] & (1 << i)) {
-			gpio_pin_set_dt(&leds[i], 0);
+			leds_set(i, 0);
 		}
 	}
 
@@ -341,7 +240,7 @@ handle_turn_off_leds(struct message *message)
 static int
 handle_disable_keyclick(struct message *message)
 {
-	keyclick_volume = -1;
+	beeper_set_keyclick_volume(-1);
 
 	return SPECIAL_MODE_CHANGE_ACK;
 }
@@ -353,7 +252,7 @@ handle_enable_keyclick_set_volume(struct message *message)
 		return SPECIAL_INPUT_ERROR;
 	}
 
-	keyclick_volume = message->buf[1] & 0x07;
+	beeper_set_keyclick_volume(message->buf[1] & 0x07);
 
 	return SPECIAL_MODE_CHANGE_ACK;
 }
@@ -361,7 +260,7 @@ handle_enable_keyclick_set_volume(struct message *message)
 static int
 handle_sound_keyclick(struct message *message)
 {
-	sound_keyclick();
+	beeper_sound_keyclick();
 
 	return SPECIAL_MODE_CHANGE_ACK;
 }
@@ -369,7 +268,7 @@ handle_sound_keyclick(struct message *message)
 static int
 handle_disable_bell(struct message *message)
 {
-	bell_volume = -1;
+	beeper_set_bell_volume(-1);
 
 	return SPECIAL_MODE_CHANGE_ACK;
 }
@@ -381,7 +280,7 @@ handle_enable_bell_set_volume(struct message *message)
 		return SPECIAL_INPUT_ERROR;
 	}
 
-	bell_volume = message->buf[1] & 0x07;
+	beeper_set_bell_volume(message->buf[1] & 0x07);
 
 	return SPECIAL_MODE_CHANGE_ACK;
 }
@@ -389,7 +288,7 @@ handle_enable_bell_set_volume(struct message *message)
 static int
 handle_sound_bell(struct message *message)
 {
-	sound_bell();
+	beeper_sound_bell();
 
 	return SPECIAL_MODE_CHANGE_ACK;
 }
@@ -456,7 +355,7 @@ handle_message(struct message *message)
 	}
 
 	if (ret > 0) {
-		uart_tx_code(ret);
+		uart_write_byte(ret);
 	}
 }
 
@@ -477,40 +376,8 @@ main(void)
 
 	init_defaults();
 
-	if (!device_is_ready(uart_dev)) {
-		LOG_ERR("UART device not found");
-		return -1;
-	}
-
-	if (!gpio_is_ready_dt(&uart_tx_enable)) {
-		LOG_ERR("UART TX enable pin GPIO port is not ready.");
-		return -1;
-	}
-
-	ret = gpio_pin_configure_dt(&uart_tx_enable, GPIO_OUTPUT_ACTIVE);
-	if (ret != 0) {
-		LOG_ERR("Configuring GPIO pin failed: %d", ret);
-		return -1;
-	}
-
-	for (int i = 0; i < NUM_LEDS; i++) {
-		if (!gpio_is_ready_dt(&leds[i])) {
-			LOG_ERR("led%d pin GPIO port is not ready.", i);
-			return -1;
-		}
-
-		ret = gpio_pin_configure_dt(&leds[i], GPIO_OUTPUT_INACTIVE);
-		if (ret != 0) {
-			LOG_ERR("Configuring GPIO pin failed: %d", ret);
-			return -1;
-		}
-	}
-
-        if (!pwm_is_ready_dt(&pwm_beeper0)) {
-                printk("Error: PWM device %s is not ready\n",
-                       pwm_beeper0.dev->name);
-                return 0;
-        }
+	leds_init();
+	beeper_init();
 
 	for (int i = 0; i < NUM_KEYS; i++) {
 		keys[i] = -1;
@@ -521,20 +388,19 @@ main(void)
 		repeat_buffers[i].interval = 30;
 	}
 
-	send_power_on_test_result();
-
-	ret = uart_irq_callback_user_data_set(uart_dev, serial_cb, NULL);
+	ret = uart_init();
 	if (ret < 0) {
-		if (ret == -ENOTSUP) {
-			LOG_ERR("Interrupt-driven UART API support not enabled");
-		} else if (ret == -ENOSYS) {
-			LOG_ERR("UART device does not support interrupt-driven API");
-		} else {
-			LOG_ERR("Error setting UART callback: %d", ret);
-		}
+		LOG_ERR("UART init failed: %d", ret);
 		return -1;
 	}
-	uart_irq_rx_enable(uart_dev);
+
+	send_power_on_test_result();
+
+	ret = uart_set_rx_callback(uart_callback);
+	if (ret < 0) {
+		LOG_ERR("UART set rx callback failed: %d", ret);
+		return -1;
+	}
 
 	ret = bluetooth_listen(hid_report_cb);
 	if (ret < 0) {
