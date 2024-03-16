@@ -117,6 +117,8 @@ static bool is_in_report(int keycode, const uint8_t *report)
 	return false;
 }
 
+K_MUTEX_DEFINE(uart_tx_mutex);
+
 static void lk201_key_down(int keycode)
 {
 	if (keycode == 0x00) {
@@ -124,6 +126,10 @@ static void lk201_key_down(int keycode)
 	}
 
 	/* TODO */
+	k_mutex_lock(&uart_tx_mutex, K_FOREVER);
+	/* All Ups */
+	uart_poll_out(uart_dev, keycode);
+	k_mutex_unlock(&uart_tx_mutex);
 }
 
 static void lk201_key_up(int keycode)
@@ -133,6 +139,10 @@ static void lk201_key_up(int keycode)
 	}
 
 	/* TODO */
+	k_mutex_lock(&uart_tx_mutex, K_FOREVER);
+	/* All Ups */
+	uart_poll_out(uart_dev, 0xB3);
+	k_mutex_unlock(&uart_tx_mutex);
 }
 
 void hid_report_cb(const uint8_t *this_report)
@@ -154,19 +164,19 @@ void hid_report_cb(const uint8_t *this_report)
 	for (int i = 0; i < 8; i++) {
 		int key = 0;
 		if ((i == 0) || (i == 4)) {
-			key = 0xAF; /* Ctrl */
+			key = LK201_CTRL; /* Ctrl */
 		} else if ((i == 1) || (i == 5)) {
-			key = 0xAE; /* Shift*/
+			key = LK201_SHIFT; /* Shift*/
 		} else {
 			continue;
 		}
 		if ((this_modifiers & (1 << i)) &&
 		    !(last_modifiers & (1 << i))) {
-			lk201_key_down(hid_to_lk201(key));
+			lk201_key_down(key);
 		}
 		if ((last_modifiers & (1 << i)) &&
 		    !(this_modifiers & (1 << i))) {
-			lk201_key_up(hid_to_lk201(key));
+			lk201_key_up(key);
 		}
 	}
 
@@ -175,10 +185,12 @@ void hid_report_cb(const uint8_t *this_report)
 
 static void
 send_power_on_test_result(void) {
+	k_mutex_lock(&uart_tx_mutex, K_FOREVER);
 	uart_poll_out(uart_dev, SPECIAL_KEYBOARD_ID_FIRMWARE);
 	uart_poll_out(uart_dev, SPECIAL_KEYBOARD_ID_HARDWARE);
 	uart_poll_out(uart_dev, 0x00); /* ERROR */
 	uart_poll_out(uart_dev, 0x00); /* KEYCODE */
+	k_mutex_unlock(&uart_tx_mutex);
 }
 
 struct message {
@@ -216,13 +228,81 @@ serial_cb(const struct device *dev, void *user_data)
 	}
 }
 
+static int keyclick_volume = -1;
+static int bell_volume = -1;
+
+K_MUTEX_DEFINE(beeper_mutex);
+
+static void
+beeper_on(int volume)
+{
+	const uint32_t pulse = (pwm_beeper0.period / 2U) * (8 - volume) / 8;
+	k_mutex_lock(&beeper_mutex, K_FOREVER);
+	int ret = pwm_set_dt(&pwm_beeper0, pwm_beeper0.period, pulse);
+	k_mutex_unlock(&beeper_mutex);
+	if (ret) {
+		LOG_ERR("Error %d: failed to set pulse width", ret);
+	}
+}
+
+static void
+beeper_off(void)
+{
+	k_mutex_lock(&beeper_mutex, K_FOREVER);
+	int ret = pwm_set_dt(&pwm_beeper0, pwm_beeper0.period, 0);
+	k_mutex_unlock(&beeper_mutex);
+	if (ret) {
+		LOG_ERR("Error %d: failed to set pulse width", ret);
+	}
+}
+
+void beeper_off_work_handler(struct k_work *work)
+{
+	beeper_off();
+}
+
+K_WORK_DEFINE(beeper_off_work, beeper_off_work_handler);
+
+void beeper_off_timer_handler(struct k_timer *dummy)
+{
+    k_work_submit(&beeper_off_work);
+}
+
+K_TIMER_DEFINE(beeper_off_timer, beeper_off_timer_handler, NULL);
+
+static void
+sound_keyclick(void)
+{
+	if (keyclick_volume < 0) {
+		return;
+	}
+
+	beeper_on(keyclick_volume);
+
+	k_timer_start(&beeper_off_timer, K_MSEC(2), K_FOREVER);
+}
+
+static void
+sound_bell(void)
+{
+	if (bell_volume < 0) {
+		return;
+	}
+
+	beeper_on(bell_volume);
+
+	k_timer_start(&beeper_off_timer, K_MSEC(125), K_FOREVER);
+}
+
 static void
 handle_message(struct message *message)
 {
 	if ((message->size == 1) && (message->buf[0] == 0xFD)) {
 		send_power_on_test_result();
 	} else {
+		k_mutex_lock(&uart_tx_mutex, K_FOREVER);
 		uart_poll_out(uart_dev, 0xBA);
+		k_mutex_unlock(&uart_tx_mutex);
 	}
 
 	if ((message->size == 2) && (message->buf[0] == 0x11)) {
@@ -239,6 +319,24 @@ handle_message(struct message *message)
 				gpio_pin_set_dt(&leds[i], 1);
 			}
 		}
+	} else if ((message->size == 1) && (message->buf[0] == 0x99)) {
+		/* Disable keyclick */
+		keyclick_volume = -1;
+	} else if ((message->size == 2) && (message->buf[0] == 0x1B)) {
+		/* Enable keyclick, set volume */
+		keyclick_volume = message->buf[1] & 0x07;
+	} else if ((message->size == 1) && (message->buf[0] == 0x9F)) {
+		/* Sound keyclick */
+		sound_keyclick();
+	} else if ((message->size == 1) && (message->buf[0] == 0xA1)) {
+		/* Disable bell */
+		bell_volume = -1;
+	} else if ((message->size == 2) && (message->buf[0] == 0x23)) {
+		/* Enable keyclick, set volume */
+		bell_volume = message->buf[1] & 0x07;
+	} else if ((message->size == 1) && (message->buf[0] == 0xA7)) {
+		/* Sound keyclick */
+		sound_bell();
 	}
 }
 
@@ -321,11 +419,6 @@ main(void)
 		LOG_ERR("Bluetooth listening failed");
 		return -1;
 	}
-
-/*	ret = pwm_set_dt(&pwm_beeper0, pwm_beeper0.period, pwm_beeper0.period / 2U);
-	if (ret) {
-		LOG_ERR("Error %d: failed to set pulse width", ret);
-	}*/
 
 	handle_messages();
 }

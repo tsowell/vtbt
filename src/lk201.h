@@ -61,6 +61,9 @@
  * Byte 4: KEYCODE (0x00 for no key down
  */
 
+#define LK201_SHIFT  0xAE
+#define LK201_CTRL   0xAF
+
 struct repeat_buffer {
 	/* Milliseconds before auto-repeating */
 	int timeout;
