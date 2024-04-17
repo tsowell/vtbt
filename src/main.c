@@ -5,6 +5,7 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/pwm.h>
+#include <zephyr/sys/dlist.h>
 
 #include "config.h"
 #include "lk201.h"
@@ -43,6 +44,20 @@ static struct division divisions_default[NUM_DIVISIONS] = {
 	{ .mode = MODE_DOWN_UP,       .buffer = -1 }, /* Function keys 5 */
 };
 
+static sys_dlist_t keys_down;
+
+struct keys_down_node {
+	sys_dnode_t node;
+	int keycode;
+	int64_t time;
+};
+
+K_MEM_SLAB_DEFINE(
+	keys_down_slab,
+	ROUND_UP(sizeof(struct keys_down_node), 4),
+	16, 4
+);
+
 /* hid_to_lk201_map */
 #include "lk201_map.c"
 
@@ -56,45 +71,47 @@ hid_to_lk201(int hid)
 	}
 }
 
-static int
+static struct division *
 lk201_keycode_to_division(int keycode)
 {
+	int division = -1;
 	if ((keycode >= 0x56) && (keycode <= 0x62)) {
-		return DIVISION_FUNCTION_KEYS_1;
+		division = DIVISION_FUNCTION_KEYS_1;
 	} else if ((keycode >= 0x63) && (keycode <= 0x6E)) {
-		return DIVISION_FUNCTION_KEYS_2;
+		division = DIVISION_FUNCTION_KEYS_2;
 	} else if ((keycode >= 0x6F) && (keycode <= 0x7A)) {
-		return DIVISION_FUNCTION_KEYS_3;
+		division = DIVISION_FUNCTION_KEYS_3;
 	} else if ((keycode >= 0x7B) && (keycode <= 0x7D)) {
-		return DIVISION_FUNCTION_KEYS_4;
+		division = DIVISION_FUNCTION_KEYS_4;
 	} else if ((keycode >= 0x7E) && (keycode <= 0x87)) {
-		return DIVISION_FUNCTION_KEYS_5;
+		division = DIVISION_FUNCTION_KEYS_5;
 	} else if ((keycode >= 0x88) && (keycode <= 0x90)) {
-		return DIVISION_SIX_EDITING_KEYS;
+		division = DIVISION_SIX_EDITING_KEYS;
 	} else if ((keycode >= 0x91) && (keycode <= 0xA5)) {
-		return DIVISION_KEYPAD;
+		division = DIVISION_KEYPAD;
 	} else if ((keycode >= 0xA6) && (keycode <= 0xA8)) {
-		return DIVISION_HORIZONTAL_CURSORS;
+		division = DIVISION_HORIZONTAL_CURSORS;
 	} else if ((keycode >= 0xA9) && (keycode <= 0xAC)) {
-		return DIVISION_VERTICAL_CURSORS;
+		division = DIVISION_VERTICAL_CURSORS;
 	} else if ((keycode >= 0xAD) && (keycode <= 0xAF)) {
-		return DIVISION_SHIFT_AND_CTRL;
+		division = DIVISION_SHIFT_AND_CTRL;
 	} else if ((keycode >= 0xB0) && (keycode <= 0xB2)) {
-		return DIVISION_LOCK_AND_COMPOSE;
+		division = DIVISION_LOCK_AND_COMPOSE;
 	} else if (keycode == 0xBC) {
-		return DIVISION_DELETE;
+		division = DIVISION_DELETE;
 	} else if ((keycode >= 0xBD) && (keycode <= 0xBE)) {
-		return DIVISION_RETURN_AND_TAB;
+		division = DIVISION_RETURN_AND_TAB;
 	} else if ((keycode >= 0xBF) && (keycode <= 0xFF)) {
-		return DIVISION_MAIN_ARRAY;
-	} else {
-		return -1;
+		division = DIVISION_MAIN_ARRAY;
 	}
+
+	return (division > 0) ? &divisions[division] : NULL;
 }
 
 static uint8_t last_report[HID_REPORT_SIZE] = { 0x00 };
 
-static bool is_in_report(int keycode, const uint8_t *report)
+static bool
+is_in_report(int keycode, const uint8_t *report)
 {
 	for (int i = HID_REPORT_FIRST_KEY; i < HID_REPORT_SIZE; i++) {
 		if (keycode == report[i]) {
@@ -105,41 +122,96 @@ static bool is_in_report(int keycode, const uint8_t *report)
 	return false;
 }
 
-static void lk201_key_down(int keycode)
+static void
+lk201_key_down(int keycode)
 {
 	if (keycode == 0x00) {
 		return;
 	}
 
-	/* TODO */
+	int ret;
+	struct keys_down_node *node;
+	ret = k_mem_slab_alloc(&keys_down_slab, (void **)&node, K_NO_WAIT);
+	if (ret < 0) {
+		LOG_ERR("Slab alloc failed: %d", ret);
+		return;
+	}
+
+	sys_dnode_init(&node->node);
+
+	node->keycode = keycode;
+	node->time = k_uptime_get();
+
+	sys_dlist_prepend(&keys_down, &node->node);
+
 	uart_write_byte(keycode);
 }
 
-static void lk201_key_up(int keycode)
+/* Track Down/Up keys released in this report */
+static int up_down_ups[16];
+static int up_down_ups_count = 0;
+
+/* Send codes for released Down/Up keys (or ALL UPS if none left pressed ) */
+static void
+send_up_down_ups(void) {
+	if (up_down_ups_count <= 0) {
+		return;
+	}
+
+	struct keys_down_node *cn, *cns;
+	bool other_down_up = false;
+	SYS_DLIST_FOR_EACH_CONTAINER_SAFE(&keys_down, cn, cns, node) {
+		struct division *division =
+			lk201_keycode_to_division(cn->keycode);
+		if (division == NULL) {
+			continue;
+		} else if (division->mode == MODE_DOWN_UP) {
+			other_down_up = true;
+			break;
+		}
+	}
+
+	if (!other_down_up) {
+		uart_write_byte(SPECIAL_ALL_UPS);
+	} else {
+		while (up_down_ups_count--) {
+			uart_write_byte(up_down_ups[up_down_ups_count]);
+		}
+	}
+}
+
+static void
+lk201_key_up(int keycode)
 {
 	if (keycode == 0x00) {
 		return;
 	}
 
-	/* TODO */
-	uart_write_byte(SPECIAL_ALL_UPS);
-}
+	struct keys_down_node *cn, *cns;
 
-void hid_report_cb(const uint8_t *this_report)
-{
-	for (int i = HID_REPORT_FIRST_KEY; i < HID_REPORT_SIZE; i++) {
-		if ((this_report[i] != 0x00) &&
-		    !is_in_report(this_report[i], last_report)) {
-			lk201_key_down(hid_to_lk201(this_report[i]));
-		}
-		if ((last_report[i] != 0x00) &&
-		    !is_in_report(last_report[i], this_report)) {
-			lk201_key_up(hid_to_lk201(last_report[i]));
+	SYS_DLIST_FOR_EACH_CONTAINER_SAFE(&keys_down, cn, cns, node) {
+		if (cn->keycode == keycode) {
+			sys_dlist_remove(&cn->node);
+			k_mem_slab_free(&keys_down_slab, (void *)cn);
+			break;
 		}
 	}
 
+	struct division *division = lk201_keycode_to_division(keycode);
+	if (division == NULL) {
+		return;
+	} else if (division->mode == MODE_DOWN_UP) {
+		up_down_ups[up_down_ups_count++] = keycode;
+	}
+}
+
+void
+hid_report_cb(const uint8_t *this_report)
+{
 	const uint8_t this_modifiers = this_report[0];
 	const uint8_t last_modifiers = last_report[0];
+
+	up_down_ups_count = 0;
 
 	for (int i = 0; i < 8; i++) {
 		int key = 0;
@@ -160,7 +232,20 @@ void hid_report_cb(const uint8_t *this_report)
 		}
 	}
 
+	for (int i = HID_REPORT_FIRST_KEY; i < HID_REPORT_SIZE; i++) {
+		if ((this_report[i] != 0x00) &&
+		    !is_in_report(this_report[i], last_report)) {
+			lk201_key_down(hid_to_lk201(this_report[i]));
+		}
+		if ((last_report[i] != 0x00) &&
+		    !is_in_report(last_report[i], this_report)) {
+			lk201_key_up(hid_to_lk201(last_report[i]));
+		}
+	}
+
 	memcpy(last_report, this_report, sizeof(last_report));
+
+	send_up_down_ups();
 }
 
 static void
@@ -373,6 +458,8 @@ int
 main(void)
 {
 	int ret;
+
+	sys_dlist_init(&keys_down);
 
 	init_defaults();
 
