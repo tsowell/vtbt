@@ -16,8 +16,6 @@
 
 LOG_MODULE_REGISTER(lk201, CONFIG_LOG_DEFAULT_LEVEL);
 
-static int keys[NUM_KEYS];
-
 static struct repeat_buffer repeat_buffers[NUM_REPEAT_BUFFERS];
 static struct repeat_buffer repeat_buffers_default[NUM_REPEAT_BUFFERS] = {
 	{ .timeout = 500, .interval = 30 },
@@ -465,10 +463,6 @@ main(void)
 
 	leds_init();
 	beeper_init();
-
-	for (int i = 0; i < NUM_KEYS; i++) {
-		keys[i] = -1;
-	}
 
 	for (int i = 0; i < NUM_REPEAT_BUFFERS; i++) {
 		repeat_buffers[i].timeout = 300;
