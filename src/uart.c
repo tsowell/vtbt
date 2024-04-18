@@ -14,8 +14,6 @@ static const struct device *const uart_dev = DEVICE_DT_GET(UART_DEVICE_NODE);
 static const struct gpio_dt_spec uart_tx_enable =
 	GPIO_DT_SPEC_GET_OR(DT_NODELABEL(uart_tx_enable), gpios, {0});
 
-K_MUTEX_DEFINE(uart_tx_mutex);
-
 static serial_cb user_callback = NULL;
 
 static void
@@ -39,7 +37,8 @@ callback(const struct device *dev, void *user_data)
 	}
 }
 
-int uart_init(void)
+int
+uart_init(void)
 {
 	int ret;
 
@@ -62,7 +61,8 @@ int uart_init(void)
 	return 0;
 }
 
-int uart_set_rx_callback(serial_cb serial_cb)
+int
+uart_set_rx_callback(serial_cb serial_cb)
 {
 	int ret;
 
@@ -83,18 +83,16 @@ int uart_set_rx_callback(serial_cb serial_cb)
 	return 0;
 }
 
-void uart_write_byte(unsigned char out_char)
+void
+uart_write_byte(unsigned char out_char)
 {
-	k_mutex_lock(&uart_tx_mutex, K_FOREVER);
 	uart_poll_out(uart_dev, out_char);
-	k_mutex_unlock(&uart_tx_mutex);
 }
 
-void uart_write(const unsigned char buf[], size_t count)
+void
+uart_write(const unsigned char buf[], size_t count)
 {
-	k_mutex_lock(&uart_tx_mutex, K_FOREVER);
 	for (size_t i = 0; i < count; i++) {
 		uart_poll_out(uart_dev, buf[i]);
 	}
-	k_mutex_unlock(&uart_tx_mutex);
 }
