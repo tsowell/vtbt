@@ -42,12 +42,15 @@ static struct division divisions_default[NUM_DIVISIONS] = {
 	{ .mode = MODE_DOWN_UP,       .buffer = -1 }, /* Function keys 5 */
 };
 
+K_MUTEX_DEFINE(mutex);
+
 static sys_dlist_t keys_down;
 
 struct keys_down_node {
 	sys_dnode_t node;
 	int keycode;
 	int64_t time;
+	bool repeating;
 };
 
 K_MEM_SLAB_DEFINE(
@@ -103,8 +106,77 @@ lk201_keycode_to_division(int keycode)
 		division = DIVISION_MAIN_ARRAY;
 	}
 
-	return (division > 0) ? &divisions[division] : NULL;
+	return (division >= 0) ? &divisions[division] : NULL;
 }
+
+static int repeating_keycode = 0;
+static int repeating_next = 0;
+static bool repeating_resend = false;
+
+static void
+metronome_ms(struct k_timer *timer_id)
+{
+	k_mutex_lock(&mutex, K_FOREVER);
+
+	struct keys_down_node *repeating = NULL;
+	struct division *division = NULL;
+	struct keys_down_node *cn, *cns;
+	SYS_DLIST_FOR_EACH_CONTAINER_SAFE(&keys_down, cn, cns, node) {
+		division = lk201_keycode_to_division(cn->keycode);
+		if (division == NULL) {
+			continue;
+		} else if (division->mode == MODE_AUTO_REPEAT) {
+			repeating = cn;
+			break;
+		}
+	}
+
+	if (repeating == NULL) {
+		repeating_keycode = 0;
+		repeating_resend = false;
+		k_mutex_unlock(&mutex);
+		return;
+	}
+
+	int64_t now = k_uptime_get();
+
+	if (repeating_keycode != repeating->keycode) {
+		int timeout = repeat_buffers[division->buffer].timeout;
+		if ((now - repeating->time) > timeout) {
+			int interval =
+				repeat_buffers[division->buffer].interval;
+
+			if (repeating->repeating && repeating_keycode != 0) {
+				uart_write_byte(repeating->keycode);
+			} else {
+				uart_write_byte(SPECIAL_METRONOME);
+			}
+			repeating_keycode = repeating->keycode;
+			repeating_next = now + interval;
+			repeating_resend = false;
+			repeating->repeating = true;
+		}
+		k_mutex_unlock(&mutex);
+		return;
+	}
+
+	if ((repeating_next - now) < 0) {
+		int interval =
+			repeat_buffers[division->buffer].interval;
+		repeating_next = now + interval;
+		if (repeating_resend) {
+			repeating_resend = false;
+			uart_write_byte(repeating->keycode);
+		} else {
+			uart_write_byte(SPECIAL_METRONOME);
+		}
+	}
+
+	k_mutex_unlock(&mutex);
+}
+
+struct k_timer metronome_timer;
+K_TIMER_DEFINE(metronome_timer, metronome_ms, NULL);
 
 static uint8_t last_report[HID_REPORT_SIZE] = { 0x00 };
 
@@ -139,10 +211,12 @@ lk201_key_down(int keycode)
 
 	node->keycode = keycode;
 	node->time = k_uptime_get();
+	node->repeating = false;
 
 	sys_dlist_prepend(&keys_down, &node->node);
 
 	uart_write_byte(keycode);
+	repeating_resend = true;
 }
 
 /* Track Down/Up keys released in this report */
@@ -171,9 +245,11 @@ send_up_down_ups(void) {
 
 	if (!other_down_up) {
 		uart_write_byte(SPECIAL_ALL_UPS);
+		repeating_resend = true;
 	} else {
 		while (up_down_ups_count--) {
 			uart_write_byte(up_down_ups[up_down_ups_count]);
+			repeating_resend = true;
 		}
 	}
 }
@@ -206,6 +282,8 @@ lk201_key_up(int keycode)
 void
 hid_report_cb(const uint8_t *this_report)
 {
+	k_mutex_lock(&mutex, K_FOREVER);
+
 	const uint8_t this_modifiers = this_report[0];
 	const uint8_t last_modifiers = last_report[0];
 
@@ -244,6 +322,8 @@ hid_report_cb(const uint8_t *this_report)
 	memcpy(last_report, this_report, sizeof(last_report));
 
 	send_up_down_ups();
+
+	k_mutex_unlock(&mutex);
 }
 
 static void
@@ -395,7 +475,10 @@ handle_reinstate_defaults(struct message *message)
 static void
 handle_message(struct message *message)
 {
+	k_mutex_lock(&mutex, K_FOREVER);
+
 	if (message->size == 0) {
+		k_mutex_unlock(&mutex);
 		return;
 	}
 
@@ -439,7 +522,10 @@ handle_message(struct message *message)
 
 	if (ret > 0) {
 		uart_write_byte(ret);
+		repeating_resend = true;
 	}
+
+	k_mutex_unlock(&mutex);
 }
 
 static void
@@ -476,6 +562,8 @@ main(void)
 	}
 
 	send_power_on_test_result();
+
+	k_timer_start(&metronome_timer, K_MSEC(1), K_MSEC(1));
 
 	ret = uart_set_rx_callback(uart_callback);
 	if (ret < 0) {
