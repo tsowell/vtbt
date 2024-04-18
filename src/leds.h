@@ -1,5 +1,5 @@
 #ifndef LEDS_H
-#define LEDS_h
+#define LEDS_H
 
 #define NUM_LEDS 4
 
