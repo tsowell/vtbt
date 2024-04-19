@@ -406,9 +406,6 @@ handle_light_leds(const struct message *message)
 			leds_set(i, 1);
 		}
 	}
-
-	lk201_uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
-	repeating_resend = true;
 }
 
 static void
@@ -425,18 +422,12 @@ handle_turn_off_leds(const struct message *message)
 			leds_set(i, 0);
 		}
 	}
-
-	lk201_uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
-	repeating_resend = true;
 }
 
 static void
 handle_disable_keyclick(const struct message *message)
 {
 	beeper_set_keyclick_volume(-1);
-
-	lk201_uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
-	repeating_resend = true;
 }
 
 static void
@@ -449,27 +440,18 @@ handle_enable_keyclick_set_volume(const struct message *message)
 	}
 
 	beeper_set_keyclick_volume(message->buf[1] & 0x07);
-
-	lk201_uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
-	repeating_resend = true;
 }
 
 static void
 handle_sound_keyclick(const struct message *message)
 {
 	beeper_sound_keyclick();
-
-	lk201_uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
-	repeating_resend = true;
 }
 
 static void
 handle_disable_bell(const struct message *message)
 {
 	beeper_set_bell_volume(-1);
-
-	lk201_uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
-	repeating_resend = true;
 }
 
 static void
@@ -482,18 +464,12 @@ handle_enable_bell_set_volume(const struct message *message)
 	}
 
 	beeper_set_bell_volume(message->buf[1] & 0x07);
-
-	lk201_uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
-	repeating_resend = true;
 }
 
 static void
 handle_sound_bell(const struct message *message)
 {
 	beeper_sound_bell();
-
-	lk201_uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
-	repeating_resend = true;
 }
 
 static void
@@ -506,9 +482,6 @@ static void
 handle_reinstate_defaults(const struct message *message)
 {
 	init_defaults();
-
-	lk201_uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
-	repeating_resend = true;
 }
 
 static void
@@ -737,6 +710,8 @@ main(void)
 	}
 
 	send_power_on_test_result();
+	lk201_uart_write_byte(SPECIAL_INPUT_ERROR);
+	lk201_uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
 
 	k_timer_start(&metronome_timer, K_MSEC(1), K_MSEC(1));
 
