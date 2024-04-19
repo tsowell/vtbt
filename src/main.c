@@ -58,6 +58,7 @@ struct keys_down_node {
 	int64_t time;
 	bool repeating;
 	bool sent;
+	bool inhibit_auto_repeat;
 };
 
 K_MEM_SLAB_DEFINE(
@@ -116,12 +117,13 @@ lk201_keycode_to_division(int keycode)
 	return (division >= 0) ? &divisions[division] : NULL;
 }
 
+static bool auto_repeat_enabled = true;
+
 static int repeating_keycode = 0;
 static int repeating_next = 0;
 static bool repeating_resend = false;
 
-static void
-metronome_ms(struct k_timer *timer_id)
+static void metronome_ms(struct k_timer *timer_id)
 {
 	k_mutex_lock(&mutex, K_FOREVER);
 
@@ -131,6 +133,8 @@ metronome_ms(struct k_timer *timer_id)
 	SYS_DLIST_FOR_EACH_CONTAINER(&keys_down, cn, node) {
 		division = lk201_keycode_to_division(cn->keycode);
 		if (division == NULL) {
+			continue;
+		} else if (cn->inhibit_auto_repeat) {
 			continue;
 		} else if (division->mode == MODE_AUTO_REPEAT) {
 			repeating = cn;
@@ -154,9 +158,15 @@ metronome_ms(struct k_timer *timer_id)
 				repeat_buffers[division->buffer].interval;
 
 			if (repeating->repeating && repeating_keycode != 0) {
-				lk201_uart_write_byte(repeating->keycode);
+				if (auto_repeat_enabled) {
+					lk201_uart_write_byte(
+						repeating->keycode);
+				}
 			} else {
-				lk201_uart_write_byte(SPECIAL_METRONOME);
+				if (auto_repeat_enabled) {
+					lk201_uart_write_byte(
+						SPECIAL_METRONOME);
+				}
 			}
 			repeating_keycode = repeating->keycode;
 			repeating_next = now + interval;
@@ -173,9 +183,13 @@ metronome_ms(struct k_timer *timer_id)
 		repeating_next = now + interval;
 		if (repeating_resend) {
 			repeating_resend = false;
-			lk201_uart_write_byte(repeating->keycode);
+			if (auto_repeat_enabled) {
+				lk201_uart_write_byte(repeating->keycode);
+			}
 		} else {
-			lk201_uart_write_byte(SPECIAL_METRONOME);
+			if (auto_repeat_enabled) {
+				lk201_uart_write_byte(SPECIAL_METRONOME);
+			}
 		}
 	}
 
@@ -219,6 +233,7 @@ lk201_key_down(int keycode)
 	node->keycode = keycode;
 	node->time = k_uptime_get();
 	node->repeating = false;
+	node->inhibit_auto_repeat = false;
 
 	sys_dlist_prepend(&keys_down, &node->node);
 
@@ -541,6 +556,41 @@ handle_resume_keyboard_transmission(const struct message *message)
 }
 
 static void
+handle_temporary_auto_repeat_inhibit(const struct message *message)
+{
+	struct keys_down_node *cn;
+	SYS_DLIST_FOR_EACH_CONTAINER(&keys_down, cn, node) {
+		struct division *division =
+			lk201_keycode_to_division(cn->keycode);
+		if (division == NULL) {
+			continue;
+		} else if (cn->inhibit_auto_repeat == true) {
+			continue;
+		} else if (division->mode == MODE_AUTO_REPEAT) {
+			cn->inhibit_auto_repeat = true;
+			break;
+		}
+	}
+}
+
+static void
+handle_enable_auto_repeat_across_keyboard(const struct message *message)
+{
+	auto_repeat_enabled = true;
+}
+
+static void
+handle_disable_auto_repeat_across_keyboard(const struct message *message)
+{
+	auto_repeat_enabled = false;
+}
+
+static void
+handle_change_all_auto_repeat_to_down_only(const struct message *message)
+{
+}
+
+static void
 handle_peripheral_command(const struct message *message)
 {
 	switch (message->buf[0]) {
@@ -550,6 +600,19 @@ handle_peripheral_command(const struct message *message)
 			break;
 		case COMMAND_INHIBIT_KEYBOARD_TRANSMISSION:
 			handle_inhibit_keyboard_transmission(message);
+			break;
+		/* AUTO-REPEAT */
+		case COMMAND_TEMPORARY_AUTO_REPEAT_INHIBIT:
+			handle_temporary_auto_repeat_inhibit(message);
+			break;
+		case COMMAND_ENABLE_AUTO_REPEAT_ACROSS_KEYBOARD:
+			handle_enable_auto_repeat_across_keyboard(message);
+			break;
+		case COMMAND_DISABLE_AUTO_REPEAT_ACROSS_KEYBOARD:
+			handle_disable_auto_repeat_across_keyboard(message);
+			break;
+		case COMMAND_CHANGE_ALL_AUTO_REPEAT_TO_DOWN_ONLY:
+			handle_change_all_auto_repeat_to_down_only(message);
 			break;
 		/* INDICATORS */
 		case COMMAND_LIGHT_LEDS:
