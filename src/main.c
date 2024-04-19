@@ -491,6 +491,9 @@ static void
 handle_reinstate_defaults(const struct message *message)
 {
 	init_defaults();
+
+	lk201_uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
+	repeating_resend = true;
 }
 
 static void
