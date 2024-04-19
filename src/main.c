@@ -159,13 +159,19 @@ static void metronome_ms(struct k_timer *timer_id)
 
 			if (repeating->repeating && repeating_keycode != 0) {
 				if (auto_repeat_enabled) {
-					lk201_uart_write_byte(
+					int sent = lk201_uart_write_byte(
 						repeating->keycode);
+					if (sent > 0) {
+						beeper_sound_keyclick();
+					}
 				}
 			} else {
 				if (auto_repeat_enabled) {
-					lk201_uart_write_byte(
+					int sent = lk201_uart_write_byte(
 						SPECIAL_METRONOME);
+					if (sent > 0) {
+						beeper_sound_keyclick();
+					}
 				}
 			}
 			repeating_keycode = repeating->keycode;
@@ -184,11 +190,19 @@ static void metronome_ms(struct k_timer *timer_id)
 		if (repeating_resend) {
 			repeating_resend = false;
 			if (auto_repeat_enabled) {
-				lk201_uart_write_byte(repeating->keycode);
+				int sent = lk201_uart_write_byte(
+					repeating->keycode);
+				if (sent > 0) {
+					beeper_sound_keyclick();
+				}
 			}
 		} else {
 			if (auto_repeat_enabled) {
-				lk201_uart_write_byte(SPECIAL_METRONOME);
+				int sent = lk201_uart_write_byte(
+					SPECIAL_METRONOME);
+				if (sent > 0) {
+					beeper_sound_keyclick();
+				}
 			}
 		}
 	}
@@ -239,6 +253,9 @@ lk201_key_down(int keycode)
 
 	int sent = lk201_uart_write_byte(keycode);
 	node->sent = sent > 0;
+	if (sent > 0) {
+		beeper_sound_keyclick();
+	}
 
 	repeating_resend = true;
 }
