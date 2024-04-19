@@ -127,8 +127,8 @@ metronome_ms(struct k_timer *timer_id)
 
 	struct keys_down_node *repeating = NULL;
 	struct division *division = NULL;
-	struct keys_down_node *cn, *cns;
-	SYS_DLIST_FOR_EACH_CONTAINER_SAFE(&keys_down, cn, cns, node) {
+	struct keys_down_node *cn;
+	SYS_DLIST_FOR_EACH_CONTAINER(&keys_down, cn, node) {
 		division = lk201_keycode_to_division(cn->keycode);
 		if (division == NULL) {
 			continue;
@@ -239,9 +239,9 @@ send_up_down_ups(void) {
 		return;
 	}
 
-	struct keys_down_node *cn, *cns;
+	struct keys_down_node *cn;
 	bool other_down_up = false;
-	SYS_DLIST_FOR_EACH_CONTAINER_SAFE(&keys_down, cn, cns, node) {
+	SYS_DLIST_FOR_EACH_CONTAINER(&keys_down, cn, node) {
 		struct division *division =
 			lk201_keycode_to_division(cn->keycode);
 		if (division == NULL) {
@@ -516,7 +516,7 @@ handle_resume_keyboard_transmission(const struct message *message)
 	int count = 0;
 
 	struct keys_down_node *cn, *cns;
-	SYS_DLIST_FOR_EACH_CONTAINER_SAFE(&keys_down, cn, cns, node) {
+	SYS_DLIST_FOR_EACH_CONTAINER(&keys_down, cn, node) {
 		if (cn->sent) {
 			continue;
 		}
