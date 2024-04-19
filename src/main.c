@@ -503,6 +503,19 @@ handle_inhibit_keyboard_transmission(const struct message *message)
 	lk201_uart_lock();
 }
 
+#define SYS_DLIST_PEEK_TAIL_CONTAINER(__dl, __cn, __n) \
+	SYS_DLIST_CONTAINER(sys_dlist_peek_tail(__dl), __cn, __n)
+
+#define SYS_DLIST_PEEK_PREV_CONTAINER(__dl, __cn, __n) \
+	((__cn != NULL) ? \
+	 SYS_DLIST_CONTAINER(sys_dlist_peek_prev(__dl, &(__cn->__n)),   \
+	                              __cn, __n) : NULL)
+
+#define SYS_DLIST_FOR_EACH_CONTAINER_REVERSE(__dl, __cn, __n)           \
+	for (__cn = SYS_DLIST_PEEK_TAIL_CONTAINER(__dl, __cn, __n);     \
+	     __cn != NULL;                                              \
+	     __cn = SYS_DLIST_PEEK_PREV_CONTAINER(__dl, __cn, __n))
+
 static void
 handle_resume_keyboard_transmission(const struct message *message)
 {
@@ -511,22 +524,14 @@ handle_resume_keyboard_transmission(const struct message *message)
 	lk201_uart_unlock();
 
 	/* Send unsent key down messages in reverse order */
-
-	unsigned char buf[16];
-	int count = 0;
-
-	struct keys_down_node *cn, *cns;
-	SYS_DLIST_FOR_EACH_CONTAINER(&keys_down, cn, node) {
+	struct keys_down_node *cn;
+	SYS_DLIST_FOR_EACH_CONTAINER_REVERSE(&keys_down, cn, node) {
 		if (cn->sent) {
 			continue;
 		}
 
-		buf[count++] = cn->keycode;
+		lk201_uart_write_byte(cn->keycode);
 		cn->sent = true;
-	}
-
-	while (count > 0) {
-		lk201_uart_write_byte(buf[--count]);
 	}
 
 	repeating_resend = true;
