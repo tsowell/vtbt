@@ -24,10 +24,10 @@ LOG_MODULE_REGISTER(lk201, CONFIG_LOG_DEFAULT_LEVEL);
 
 static struct repeat_buffer repeat_buffers[NUM_REPEAT_BUFFERS];
 static struct repeat_buffer repeat_buffers_default[NUM_REPEAT_BUFFERS] = {
-	{ .timeout = 500, .interval = 30 },
-	{ .timeout = 300, .interval = 30 },
-	{ .timeout = 500, .interval = 40 },
-	{ .timeout = 300, .interval = 40 },
+	{ .timeout = 500, .interval = 1000 / 30 },
+	{ .timeout = 300, .interval = 1000 / 30 },
+	{ .timeout = 500, .interval = 1000 / 40 },
+	{ .timeout = 300, .interval = 1000 / 40 },
 };
 
 static struct division divisions[NUM_DIVISIONS];
@@ -592,6 +592,33 @@ handle_peripheral_command(const struct message *message)
 static void
 handle_transmission_command(const struct message *message)
 {
+	int division = (message->buf[0] >> 3) & 0x0f;
+	if (division == 0x0f) {
+		if (message->size != 3) {
+			lk201_uart_write_byte(SPECIAL_INPUT_ERROR);
+			repeating_resend = true;
+			return;
+		}
+		int buffer = (message->buf[0] >> 1) & 0x03;
+		int timeout = ((message->buf[1]) & 0x7f) * 5;
+		int interval = 1000 / ((message->buf[2]) & 0x7f);
+		repeat_buffers[buffer].timeout = timeout;
+		repeat_buffers[buffer].interval = interval;
+	} else if (division == 0x00) {
+		lk201_uart_write_byte(SPECIAL_INPUT_ERROR);
+		repeating_resend = true;
+		return;
+	} else {
+		int mode = ((message->buf[0]) >> 1) & 0x03;
+		divisions[division-1].mode = mode;
+		if ((mode == MODE_AUTO_REPEAT) && (message->size == 2)) {
+			int buffer = message->buf[1] & 0x7f;
+			divisions[division-1].buffer = buffer;
+		}
+
+		lk201_uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
+		repeating_resend = true;
+	}
 }
 
 static void
