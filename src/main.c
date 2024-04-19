@@ -388,8 +388,8 @@ init_defaults(void)
 {
 	memcpy(repeat_buffers, repeat_buffers_default, sizeof(repeat_buffers));
 	memcpy(divisions, divisions_default, sizeof(divisions));
-	beeper_set_keyclick_volume(-1);
-	beeper_set_bell_volume(-1);
+	beeper_set_keyclick_volume(2);
+	beeper_set_bell_volume(2);
 }
 
 static void
