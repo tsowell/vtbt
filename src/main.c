@@ -13,12 +13,6 @@
 #include "bluetooth.h"
 #include "leds.h"
 #include "uart.h"
-#include "lk201_uart.h"
-
-#define uart_write(args...) do { \
-	_Pragma("GCC error \"use lk201_uart_write!\"") } while (0)
-#define uart_write_byte(args...) do { \
-	_Pragma("GCC error \"use lk201_uart_write_byte!\"") } while (0)
 
 LOG_MODULE_REGISTER(lk201, CONFIG_LOG_DEFAULT_LEVEL);
 
@@ -173,7 +167,7 @@ handle_metronome_message(const struct message *message)
 
 			if (repeating->repeating && repeating_keycode != 0) {
 				if (auto_repeat_enabled) {
-					int sent = lk201_uart_write_byte(
+					int sent = uart_write_byte(
 						repeating->keycode);
 					if (sent > 0) {
 						beeper_sound_keyclick();
@@ -181,7 +175,7 @@ handle_metronome_message(const struct message *message)
 				}
 			} else {
 				if (auto_repeat_enabled) {
-					int sent = lk201_uart_write_byte(
+					int sent = uart_write_byte(
 						SPECIAL_METRONOME);
 					if (sent > 0) {
 						beeper_sound_keyclick();
@@ -203,16 +197,14 @@ handle_metronome_message(const struct message *message)
 		if (repeating_resend) {
 			repeating_resend = false;
 			if (auto_repeat_enabled) {
-				int sent = lk201_uart_write_byte(
-					repeating->keycode);
+				int sent = uart_write_byte(repeating->keycode);
 				if (sent > 0) {
 					beeper_sound_keyclick();
 				}
 			}
 		} else {
 			if (auto_repeat_enabled) {
-				int sent = lk201_uart_write_byte(
-					SPECIAL_METRONOME);
+				int sent = uart_write_byte(SPECIAL_METRONOME);
 				if (sent > 0) {
 					beeper_sound_keyclick();
 				}
@@ -261,7 +253,7 @@ lk201_key_down(int keycode)
 
 	sys_dlist_prepend(&keys_down, &node->node);
 
-	int sent = lk201_uart_write_byte(keycode);
+	int sent = uart_write_byte(keycode);
 	node->sent = sent > 0;
 	if (sent > 0) {
 		beeper_sound_keyclick();
@@ -295,11 +287,11 @@ send_up_down_ups(void) {
 	}
 
 	if (!other_down_up) {
-		lk201_uart_write_byte(SPECIAL_ALL_UPS);
+		uart_write_byte(SPECIAL_ALL_UPS);
 		repeating_resend = true;
 	} else {
 		while (up_down_ups_count--) {
-			lk201_uart_write_byte(up_down_ups[up_down_ups_count]);
+			uart_write_byte(up_down_ups[up_down_ups_count]);
 			repeating_resend = true;
 		}
 	}
@@ -392,7 +384,7 @@ send_power_on_test_result(void) {
 		0x00, /* ERROR */
 		0x00, /* KEYCODE */
 	};
-	lk201_uart_write(test_result, sizeof(test_result));
+	uart_write(test_result, sizeof(test_result));
 }
 
 static struct message callback_message = { MSG_HOST, 0 , { 0 } };
@@ -423,7 +415,7 @@ static void
 handle_light_leds(const struct message *message)
 {
 	if (message->size != 2) {
-		lk201_uart_write_byte(SPECIAL_INPUT_ERROR);
+		uart_write_byte(SPECIAL_INPUT_ERROR);
 		repeating_resend = true;
 		return;
 	}
@@ -439,7 +431,7 @@ static void
 handle_turn_off_leds(const struct message *message)
 {
 	if (message->size != 2) {
-		lk201_uart_write_byte(SPECIAL_INPUT_ERROR);
+		uart_write_byte(SPECIAL_INPUT_ERROR);
 		repeating_resend = true;
 		return;
 	}
@@ -461,7 +453,7 @@ static void
 handle_enable_keyclick_set_volume(const struct message *message)
 {
 	if (message->size != 2) {
-		lk201_uart_write_byte(SPECIAL_INPUT_ERROR);
+		uart_write_byte(SPECIAL_INPUT_ERROR);
 		repeating_resend = true;
 		return;
 	}
@@ -485,7 +477,7 @@ static void
 handle_enable_bell_set_volume(const struct message *message)
 {
 	if (message->size != 2) {
-		lk201_uart_write_byte(SPECIAL_INPUT_ERROR);
+		uart_write_byte(SPECIAL_INPUT_ERROR);
 		repeating_resend = true;
 		return;
 	}
@@ -516,9 +508,9 @@ handle_inhibit_keyboard_transmission(const struct message *message)
 {
 	leds_set(LED_LOCK, 1);
 
-	lk201_uart_write_byte(SPECIAL_KBD_LOCKED_ACK);
-
-	lk201_uart_lock();
+	uart_write_byte(SPECIAL_KBD_LOCKED_ACK);
+	uart_flush();
+	uart_lock();
 }
 
 #define SYS_DLIST_PEEK_TAIL_CONTAINER(__dl, __cn, __n) \
@@ -539,7 +531,10 @@ handle_resume_keyboard_transmission(const struct message *message)
 {
 	leds_set(LED_LOCK, 0);
 
-	lk201_uart_unlock();
+	uart_unlock();
+	if (uart_get_overflow()) {
+		uart_write_byte(SPECIAL_OUTPUT_ERROR);
+	}
 
 	/* Send unsent key down messages in reverse order */
 	struct keys_down_node *cn;
@@ -548,7 +543,7 @@ handle_resume_keyboard_transmission(const struct message *message)
 			continue;
 		}
 
-		lk201_uart_write_byte(cn->keycode);
+		uart_write_byte(cn->keycode);
 		cn->sent = true;
 	}
 
@@ -658,7 +653,7 @@ handle_transmission_command(const struct message *message)
 	int division = (message->buf[0] >> 3) & 0x0f;
 	if (division == 0x0f) {
 		if (message->size != 3) {
-			lk201_uart_write_byte(SPECIAL_INPUT_ERROR);
+			uart_write_byte(SPECIAL_INPUT_ERROR);
 			repeating_resend = true;
 			return;
 		}
@@ -668,7 +663,7 @@ handle_transmission_command(const struct message *message)
 		repeat_buffers[buffer].timeout = timeout;
 		repeat_buffers[buffer].interval = interval;
 	} else if (division == 0x00) {
-		lk201_uart_write_byte(SPECIAL_INPUT_ERROR);
+		uart_write_byte(SPECIAL_INPUT_ERROR);
 		repeating_resend = true;
 		return;
 	} else {
@@ -679,7 +674,7 @@ handle_transmission_command(const struct message *message)
 			divisions[division-1].buffer = buffer;
 		}
 
-		lk201_uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
+		uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
 		repeating_resend = true;
 	}
 }
@@ -750,8 +745,8 @@ main(void)
 	}
 
 	send_power_on_test_result();
-	lk201_uart_write_byte(SPECIAL_INPUT_ERROR);
-	lk201_uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
+	uart_write_byte(SPECIAL_INPUT_ERROR);
+	uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
 
 	k_timer_start(&metronome_timer, K_MSEC(1), K_MSEC(1));
 

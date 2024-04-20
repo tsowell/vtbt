@@ -21,12 +21,21 @@ static const struct gpio_dt_spec uart_tx_enable =
 
 static serial_cb user_callback = NULL;
 
+static atomic_t locked;
+static bool overflow;
+
 static void
 callback_tx(void)
 {
 	uint32_t size;
 	int filled_size;
 	uint8_t *data;
+
+	if (atomic_get(&locked)) {
+		uart_irq_tx_disable(uart_dev);
+		return;
+	}
+
 	while (!ring_buf_is_empty(&tx_buf)) {
 		size = ring_buf_get_claim(&tx_buf, &data, 4);
 		filled_size = uart_fifo_fill(uart_dev, data, size);
@@ -125,22 +134,33 @@ uart_set_rx_callback(serial_cb serial_cb)
 	return 0;
 }
 
-void
+int
 uart_write_byte(unsigned char out_char)
 {
 	while (ring_buf_put(&tx_buf, &out_char, 1) < 1) {
+		if (atomic_get(&locked)) {
+			overflow = true;
+			return 0;
+		}
 		k_sem_take(&tx_space_sem, K_FOREVER);
 	}
 	uart_irq_tx_enable(uart_dev);
+	return 1;
 }
 
-void
+int
 uart_write(const unsigned char buf[], size_t count)
 {
 	uint32_t total = 0;
 	while (true) {
 		uint32_t wrote = ring_buf_put(
 			&tx_buf, &buf[total], count - total);
+		if (atomic_get(&locked)) {
+			if (wrote < count) {
+				overflow = true;
+			}
+			return (int)wrote;
+		}
 		if (wrote > 0) {
 			uart_irq_tx_enable(uart_dev);
 		}
@@ -150,4 +170,44 @@ uart_write(const unsigned char buf[], size_t count)
 		}
 		k_sem_take(&tx_space_sem, K_FOREVER);
 	}
+
+	return count;
+}
+
+void
+uart_flush(void)
+{
+	uart_irq_tx_enable(uart_dev);
+	while (!ring_buf_is_empty(&tx_buf)) {
+		k_sem_take(&tx_space_sem, K_FOREVER);
+	}
+}
+
+void
+uart_lock(void)
+{
+	if (atomic_get(&locked)) {
+		return;
+	}
+
+	atomic_set(&locked, 1);
+	overflow = false;
+}
+
+void
+uart_unlock(void)
+{
+	if (!atomic_get(&locked)) {
+		return;
+	}
+
+	atomic_set(&locked, 0);
+
+	uart_flush();
+}
+
+bool
+uart_get_overflow(void)
+{
+	return overflow;
 }
