@@ -73,6 +73,7 @@ static void
 init_defaults(void)
 {
 	lk201_init_defaults();
+	keyboard_init_defaults();
 	beeper_set_keyclick_volume(2);
 	beeper_set_bell_volume(2);
 }
@@ -127,6 +128,22 @@ enable_keyclick_set_volume(const struct event *event)
 	}
 
 	beeper_set_keyclick_volume(event->buf[1] & 0x07);
+}
+
+static void
+disable_ctrl_keyclick(const struct event *event)
+{
+	ARG_UNUSED(event);
+
+	keyboard_ctrl_keyclick_disable();
+}
+
+static void
+enable_ctrl_keyclick(const struct event *event)
+{
+	ARG_UNUSED(event);
+
+	keyboard_ctrl_keyclick_enable();
 }
 
 static void
@@ -300,6 +317,12 @@ peripheral_command(const struct event *event)
 			break;
 		case COMMAND_ENABLE_KEYCLICK_SET_VOLUME:
 			enable_keyclick_set_volume(event);
+			break;
+		case COMMAND_DISABLE_CTRL_KEYCLICK:
+			disable_ctrl_keyclick(event);
+			break;
+		case COMMAND_ENABLE_CTRL_KEYCLICK:
+			enable_ctrl_keyclick(event);
 			break;
 		case COMMAND_SOUND_KEYCLICK:
 			sound_keyclick(event);

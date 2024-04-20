@@ -17,6 +17,26 @@ K_MEM_SLAB_DEFINE(
 
 static uint8_t last_report[HID_REPORT_SIZE] = { 0x00 };
 
+static bool ctrl_keyclick = false;
+
+void
+keyboard_ctrl_keyclick_enable(void)
+{
+	ctrl_keyclick = true;
+}
+
+void
+keyboard_ctrl_keyclick_disable(void)
+{
+	ctrl_keyclick = false;
+}
+
+void
+keyboard_init_defaults(void)
+{
+	ctrl_keyclick = false;
+}
+
 static bool
 is_in_report(int keycode, const uint8_t *report)
 {
@@ -55,7 +75,13 @@ lk201_key_down(sys_dlist_t *keys_down, int keycode)
 	int sent = uart_write_byte(keycode);
 	node->sent = sent > 0;
 	if (sent > 0) {
-		beeper_sound_keyclick();
+		if (keycode == LK201_CTRL) {
+			if (ctrl_keyclick) {
+				beeper_sound_keyclick();
+			}
+		} else {
+			beeper_sound_keyclick();
+		}
 	}
 
 	metronome_resend();
