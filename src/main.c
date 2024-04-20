@@ -360,9 +360,14 @@ transmission_command(const struct event *event)
 	} else {
 		int mode = ((event->buf[0]) >> 1) & 0x03;
 		lk201_division_get(division-1)->mode = mode;
-		if ((mode == MODE_AUTO_REPEAT) && (event->size == 2)) {
-			int buffer = event->buf[1] & 0x7f;
-			lk201_division_get(division-1)->buffer = buffer;
+		if (mode == MODE_AUTO_REPEAT) {
+			if (event->size == 2) {
+				int buffer = event->buf[1] & 0x7f;
+				lk201_division_get(division-1)->buffer = buffer;
+			} else {
+				/* Default buffer? */
+				lk201_division_get(division-1)->buffer = 0;
+			}
 		}
 
 		uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
