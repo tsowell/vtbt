@@ -186,6 +186,18 @@ sound_bell(const struct event *event)
 }
 
 static void
+request_keyboard_id(const struct event *event)
+{
+	ARG_UNUSED(event);
+
+	const unsigned char keyboard_id[] = {
+		SPECIAL_KEYBOARD_ID_FIRMWARE,
+		SPECIAL_KEYBOARD_ID_HARDWARE,
+	};
+	uart_write(keyboard_id, sizeof(keyboard_id));
+}
+
+static void
 jump_to_power_up(const struct event *event)
 {
 	ARG_UNUSED(event);
@@ -373,6 +385,9 @@ peripheral_command(const struct event *event)
 			change_all_auto_repeat_to_down_only(event);
 			break;
 		/* OTHER */
+		case COMMAND_REQUEST_KEYBOARD_ID:
+			request_keyboard_id(event);
+			break;
 		case COMMAND_JUMP_TO_POWER_UP:
 			jump_to_power_up(event);
 			break;
