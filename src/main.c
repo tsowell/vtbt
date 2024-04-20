@@ -18,6 +18,8 @@
 
 LOG_MODULE_REGISTER(vtbt, CONFIG_LOG_DEFAULT_LEVEL);
 
+static bool test_mode = false;
+
 static sys_dlist_t keys_down;
 
 K_MSGQ_DEFINE(msgq, sizeof(struct event), 32, 4);
@@ -72,6 +74,7 @@ uart_callback(uint8_t c)
 static void
 init_defaults(void)
 {
+	test_mode = false;
 	lk201_init_defaults();
 	keyboard_init_defaults();
 	beeper_set_keyclick_volume(2);
@@ -187,7 +190,18 @@ jump_to_power_up(const struct event *event)
 {
 	ARG_UNUSED(event);
 
+	init_defaults();
 	send_power_on_test_result();
+}
+
+static void
+jump_to_test_mode(const struct event *event)
+{
+	ARG_UNUSED(event);
+
+	test_mode = true;
+
+	uart_write_byte(SPECIAL_TEST_MODE_ACK);
 }
 
 static void
@@ -294,6 +308,15 @@ change_all_auto_repeat_to_down_only(const struct event *event)
 }
 
 static void
+test_mode_jump_to_power_up(const struct event *event)
+{
+	ARG_UNUSED(event);
+
+	init_defaults();
+	send_power_on_test_result();
+}
+
+static void
 peripheral_command(const struct event *event)
 {
 	switch (event->buf[0]) {
@@ -353,6 +376,9 @@ peripheral_command(const struct event *event)
 		case COMMAND_JUMP_TO_POWER_UP:
 			jump_to_power_up(event);
 			break;
+		case COMMAND_JUMP_TO_TEST_MODE:
+			jump_to_test_mode(event);
+			break;
 		case COMMAND_REINSTATE_DEFAULTS:
 			reinstate_defaults(event);
 			break;
@@ -406,10 +432,16 @@ host_event(const struct event *event)
 		return;
 	}
 
-	if (event->buf[0] & 0x01) {
-		peripheral_command(event);
+	if (test_mode) {
+		if (event->buf[0] == TEST_MODE_COMMAND_JUMP_TO_POWER_UP) {
+			test_mode_jump_to_power_up(event);
+		}
 	} else {
-		transmission_command(event);
+		if (event->buf[0] & 0x01) {
+			peripheral_command(event);
+		} else {
+			transmission_command(event);
+		}
 	}
 }
 

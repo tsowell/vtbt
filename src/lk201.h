@@ -84,6 +84,9 @@
 #define COMMAND_JUMP_TO_TEST_MODE                    0xcb
 #define COMMAND_REINSTATE_DEFAULTS                   0xd3
 
+/* TEST MODE */
+#define TEST_MODE_COMMAND_JUMP_TO_POWER_UP           0x80
+
 /* Power-up transmission
  * Byte 1: KBID (firmware) 0x01
  * Byte 2: KBID (hardware) 0x00
