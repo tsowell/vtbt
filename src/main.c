@@ -334,6 +334,7 @@ peripheral_command(const struct event *event)
 			reinstate_defaults(event);
 			break;
 		default:
+			uart_write_byte(SPECIAL_INPUT_ERROR);
 			break;
 	}
 }
