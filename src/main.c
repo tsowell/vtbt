@@ -81,6 +81,61 @@ init_defaults(void)
 	beeper_set_bell_volume(2);
 }
 
+/* FLOW CONTROL */
+
+static void
+inhibit_keyboard_transmission(const struct event *event)
+{
+	ARG_UNUSED(event);
+
+	leds_set(LED_LOCK, 1);
+
+	uart_write_byte(SPECIAL_KBD_LOCKED_ACK);
+	uart_flush();
+	uart_lock();
+}
+
+#define SYS_DLIST_PEEK_TAIL_CONTAINER(__dl, __cn, __n) \
+	SYS_DLIST_CONTAINER(sys_dlist_peek_tail(__dl), __cn, __n)
+
+#define SYS_DLIST_PEEK_PREV_CONTAINER(__dl, __cn, __n) \
+	((__cn != NULL) ? \
+	 SYS_DLIST_CONTAINER(sys_dlist_peek_prev(__dl, &(__cn->__n)),   \
+	                              __cn, __n) : NULL)
+
+#define SYS_DLIST_FOR_EACH_CONTAINER_REVERSE(__dl, __cn, __n)           \
+	for (__cn = SYS_DLIST_PEEK_TAIL_CONTAINER(__dl, __cn, __n);     \
+	     __cn != NULL;                                              \
+	     __cn = SYS_DLIST_PEEK_PREV_CONTAINER(__dl, __cn, __n))
+
+static void
+resume_keyboard_transmission(const struct event *event)
+{
+	ARG_UNUSED(event);
+
+	leds_set(LED_LOCK, 0);
+
+	uart_unlock();
+	if (uart_overflow_get()) {
+		uart_write_byte(SPECIAL_OUTPUT_ERROR);
+	}
+
+	/* Send unsent key down in reverse order */
+	struct key_down *cn;
+	SYS_DLIST_FOR_EACH_CONTAINER_REVERSE(&keys_down, cn, node) {
+		if (cn->sent) {
+			continue;
+		}
+
+		uart_write_byte(cn->keycode);
+		cn->sent = true;
+	}
+
+	metronome_resend();
+}
+
+/* INDICATORS */
+
 static void
 light_leds(const struct event *event)
 {
@@ -112,6 +167,8 @@ turn_off_leds(const struct event *event)
 		}
 	}
 }
+
+/* AUDIO */
 
 static void
 disable_keyclick(const struct event *event)
@@ -185,95 +242,7 @@ sound_bell(const struct event *event)
 	beeper_sound_bell();
 }
 
-static void
-request_keyboard_id(const struct event *event)
-{
-	ARG_UNUSED(event);
-
-	const unsigned char keyboard_id[] = {
-		SPECIAL_KEYBOARD_ID_FIRMWARE,
-		SPECIAL_KEYBOARD_ID_HARDWARE,
-	};
-	uart_write(keyboard_id, sizeof(keyboard_id));
-}
-
-static void
-jump_to_power_up(const struct event *event)
-{
-	ARG_UNUSED(event);
-
-	init_defaults();
-	send_power_on_test_result();
-}
-
-static void
-jump_to_test_mode(const struct event *event)
-{
-	ARG_UNUSED(event);
-
-	test_mode = true;
-
-	uart_write_byte(SPECIAL_TEST_MODE_ACK);
-}
-
-static void
-reinstate_defaults(const struct event *event)
-{
-	ARG_UNUSED(event);
-
-	init_defaults();
-}
-
-static void
-inhibit_keyboard_transmission(const struct event *event)
-{
-	ARG_UNUSED(event);
-
-	leds_set(LED_LOCK, 1);
-
-	uart_write_byte(SPECIAL_KBD_LOCKED_ACK);
-	uart_flush();
-	uart_lock();
-}
-
-#define SYS_DLIST_PEEK_TAIL_CONTAINER(__dl, __cn, __n) \
-	SYS_DLIST_CONTAINER(sys_dlist_peek_tail(__dl), __cn, __n)
-
-#define SYS_DLIST_PEEK_PREV_CONTAINER(__dl, __cn, __n) \
-	((__cn != NULL) ? \
-	 SYS_DLIST_CONTAINER(sys_dlist_peek_prev(__dl, &(__cn->__n)),   \
-	                              __cn, __n) : NULL)
-
-#define SYS_DLIST_FOR_EACH_CONTAINER_REVERSE(__dl, __cn, __n)           \
-	for (__cn = SYS_DLIST_PEEK_TAIL_CONTAINER(__dl, __cn, __n);     \
-	     __cn != NULL;                                              \
-	     __cn = SYS_DLIST_PEEK_PREV_CONTAINER(__dl, __cn, __n))
-
-static void
-resume_keyboard_transmission(const struct event *event)
-{
-	ARG_UNUSED(event);
-
-	leds_set(LED_LOCK, 0);
-
-	uart_unlock();
-	if (uart_overflow_get()) {
-		uart_write_byte(SPECIAL_OUTPUT_ERROR);
-	}
-
-	/* Send unsent key down in reverse order */
-	struct key_down *cn;
-	SYS_DLIST_FOR_EACH_CONTAINER_REVERSE(&keys_down, cn, node) {
-		if (cn->sent) {
-			continue;
-		}
-
-		uart_write_byte(cn->keycode);
-		cn->sent = true;
-	}
-
-	metronome_resend();
-}
+/* AUTO-REPEAT */
 
 static void
 temporary_auto_repeat_inhibit(const struct event *event)
@@ -317,6 +286,47 @@ change_all_auto_repeat_to_down_only(const struct event *event)
 	ARG_UNUSED(event);
 
 	lk201_change_all_auto_repeat_to_down_only();
+}
+
+/* OTHER */
+
+static void
+request_keyboard_id(const struct event *event)
+{
+	ARG_UNUSED(event);
+
+	const unsigned char keyboard_id[] = {
+		SPECIAL_KEYBOARD_ID_FIRMWARE,
+		SPECIAL_KEYBOARD_ID_HARDWARE,
+	};
+	uart_write(keyboard_id, sizeof(keyboard_id));
+}
+
+static void
+jump_to_power_up(const struct event *event)
+{
+	ARG_UNUSED(event);
+
+	init_defaults();
+	send_power_on_test_result();
+}
+
+static void
+jump_to_test_mode(const struct event *event)
+{
+	ARG_UNUSED(event);
+
+	test_mode = true;
+
+	uart_write_byte(SPECIAL_TEST_MODE_ACK);
+}
+
+static void
+reinstate_defaults(const struct event *event)
+{
+	ARG_UNUSED(event);
+
+	init_defaults();
 }
 
 static void
