@@ -106,7 +106,10 @@ struct division {
 	int buffer;
 };
 
-void lk201_main(void);
-void lk201_handle_hid_report(const uint8_t *this_report);
+void lk201_init_defaults(void);
+struct repeat_buffer *lk201_repeat_buffer_get(int repeat_buffer);
+struct division *lk201_division_get(int division);
+struct division *lk201_division_get_from_keycode(int keycode);
+int lk201_keycode_get_from_hid(int hid);
 
 #endif /* LK201_H */

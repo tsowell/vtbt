@@ -207,7 +207,7 @@ uart_unlock(void)
 }
 
 bool
-uart_get_overflow(void)
+uart_overflow_get(void)
 {
 	return overflow;
 }

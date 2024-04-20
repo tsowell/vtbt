@@ -7,376 +7,40 @@
 #include <zephyr/drivers/pwm.h>
 #include <zephyr/sys/dlist.h>
 
-#include "config.h"
+#include "vtbt.h"
 #include "lk201.h"
 #include "beeper.h"
 #include "bluetooth.h"
 #include "leds.h"
+#include "metronome.h"
 #include "uart.h"
+#include "keyboard.h"
 
-LOG_MODULE_REGISTER(lk201, CONFIG_LOG_DEFAULT_LEVEL);
-
-static struct repeat_buffer repeat_buffers[NUM_REPEAT_BUFFERS];
-static struct repeat_buffer repeat_buffers_default[NUM_REPEAT_BUFFERS] = {
-	{ .timeout = 500, .interval = 1000 / 30 },
-	{ .timeout = 300, .interval = 1000 / 30 },
-	{ .timeout = 500, .interval = 1000 / 40 },
-	{ .timeout = 300, .interval = 1000 / 40 },
-};
-
-static struct division divisions[NUM_DIVISIONS];
-static struct division divisions_default[NUM_DIVISIONS] = {
-	{ .mode = MODE_AUTO_REPEAT,   .buffer =  0 }, /* Main array */
-	{ .mode = MODE_AUTO_REPEAT,   .buffer =  0 }, /* Keypad */
-	{ .mode = MODE_AUTO_REPEAT,   .buffer =  1 }, /* Delete */
-	{ .mode = MODE_DOWN_ONLY,     .buffer = -1 }, /* Return and tab */
-	{ .mode = MODE_DOWN_ONLY,     .buffer = -1 }, /* Lock and compose */
-	{ .mode = MODE_DOWN_UP,       .buffer = -1 }, /* Shift and control */
-	{ .mode = MODE_AUTO_REPEAT,   .buffer =  1 }, /* Horizontal cursors */
-	{ .mode = MODE_AUTO_REPEAT,   .buffer =  1 }, /* Vertical cursors */
-	{ .mode = MODE_DOWN_UP,       .buffer = -1 }, /* Six editing keys */
-	{ .mode = MODE_DOWN_UP,       .buffer = -1 }, /* Function keys 1 */
-	{ .mode = MODE_DOWN_UP,       .buffer = -1 }, /* Function keys 2 */
-	{ .mode = MODE_DOWN_UP,       .buffer = -1 }, /* Function keys 3 */
-	{ .mode = MODE_DOWN_UP,       .buffer = -1 }, /* Function keys 4 */
-	{ .mode = MODE_DOWN_UP,       .buffer = -1 }, /* Function keys 5 */
-};
+LOG_MODULE_REGISTER(vtbt, CONFIG_LOG_DEFAULT_LEVEL);
 
 static sys_dlist_t keys_down;
 
-struct keys_down_node {
-	sys_dnode_t node;
-	int keycode;
-	int64_t time;
-	bool repeating;
-	bool sent;
-	bool inhibit_auto_repeat;
-};
+K_MSGQ_DEFINE(msgq, sizeof(struct event), 32, 4);
 
-K_MEM_SLAB_DEFINE(
-	keys_down_slab,
-	ROUND_UP(sizeof(struct keys_down_node), 4),
-	16, 4
-);
-
-/* hid_to_lk201_map */
-#include "lk201_map.c"
-
-static int
-hid_to_lk201(int hid)
-{
-	if (hid < (int)sizeof(hid_to_lk201_map)) {
-		return hid_to_lk201_map[hid];
-	} else {
-		return 0x00;
-	}
-}
-
-static struct division *
-lk201_keycode_to_division(int keycode)
-{
-	int division = -1;
-	if ((keycode >= 0x56) && (keycode <= 0x62)) {
-		division = DIVISION_FUNCTION_KEYS_1;
-	} else if ((keycode >= 0x63) && (keycode <= 0x6E)) {
-		division = DIVISION_FUNCTION_KEYS_2;
-	} else if ((keycode >= 0x6F) && (keycode <= 0x7A)) {
-		division = DIVISION_FUNCTION_KEYS_3;
-	} else if ((keycode >= 0x7B) && (keycode <= 0x7D)) {
-		division = DIVISION_FUNCTION_KEYS_4;
-	} else if ((keycode >= 0x7E) && (keycode <= 0x87)) {
-		division = DIVISION_FUNCTION_KEYS_5;
-	} else if ((keycode >= 0x88) && (keycode <= 0x90)) {
-		division = DIVISION_SIX_EDITING_KEYS;
-	} else if ((keycode >= 0x91) && (keycode <= 0xA5)) {
-		division = DIVISION_KEYPAD;
-	} else if ((keycode >= 0xA6) && (keycode <= 0xA8)) {
-		division = DIVISION_HORIZONTAL_CURSORS;
-	} else if ((keycode >= 0xA9) && (keycode <= 0xAC)) {
-		division = DIVISION_VERTICAL_CURSORS;
-	} else if ((keycode >= 0xAD) && (keycode <= 0xAF)) {
-		division = DIVISION_SHIFT_AND_CTRL;
-	} else if ((keycode >= 0xB0) && (keycode <= 0xB2)) {
-		division = DIVISION_LOCK_AND_COMPOSE;
-	} else if (keycode == 0xBC) {
-		division = DIVISION_DELETE;
-	} else if ((keycode >= 0xBD) && (keycode <= 0xBE)) {
-		division = DIVISION_RETURN_AND_TAB;
-	} else if ((keycode >= 0xBF) && (keycode <= 0xFF)) {
-		division = DIVISION_MAIN_ARRAY;
-	}
-
-	return (division >= 0) ? &divisions[division] : NULL;
-}
-
-enum message_source { MSG_HOST, MSG_KEYBOARD, MSG_METRONOME };
-
-struct message {
-	enum message_source source;
-	uint8_t size;
-	uint8_t buf[HID_REPORT_SIZE];
-};
-
-K_MSGQ_DEFINE(msgq, sizeof(struct message), 32, 4);
-
-static bool auto_repeat_enabled = true;
-
-static int repeating_keycode = 0;
-static int repeating_next = 0;
-static bool repeating_resend = false;
-
-static struct message timer_message = { MSG_METRONOME, 0 , { 0 } };
+static struct event metronome_evt = { EVT_METRONOME, 0 , { 0 } };
 
 static void
 metronome(struct k_timer *timer_id)
 {
 	ARG_UNUSED(timer_id);
-	k_msgq_put(&msgq, &timer_message, K_NO_WAIT);
-}
 
-static void
-handle_metronome_message(const struct message *message)
-{
-	ARG_UNUSED(message);
-
-	struct keys_down_node *repeating = NULL;
-	struct division *division = NULL;
-	struct keys_down_node *cn;
-	SYS_DLIST_FOR_EACH_CONTAINER(&keys_down, cn, node) {
-		division = lk201_keycode_to_division(cn->keycode);
-		if (division == NULL) {
-			continue;
-		} else if (cn->inhibit_auto_repeat) {
-			continue;
-		} else if (division->mode == MODE_AUTO_REPEAT) {
-			repeating = cn;
-			break;
-		}
-	}
-
-	if (repeating == NULL) {
-		repeating_keycode = 0;
-		repeating_resend = false;
-		return;
-	}
-
-	int64_t now = k_uptime_get();
-
-	if (repeating_keycode != repeating->keycode) {
-		int timeout = repeat_buffers[division->buffer].timeout;
-		if ((now - repeating->time) > timeout) {
-			int interval =
-				repeat_buffers[division->buffer].interval;
-
-			if (repeating->repeating && repeating_keycode != 0) {
-				if (auto_repeat_enabled) {
-					int sent = uart_write_byte(
-						repeating->keycode);
-					if (sent > 0) {
-						beeper_sound_keyclick();
-					}
-				}
-			} else {
-				if (auto_repeat_enabled) {
-					int sent = uart_write_byte(
-						SPECIAL_METRONOME);
-					if (sent > 0) {
-						beeper_sound_keyclick();
-					}
-				}
-			}
-			repeating_keycode = repeating->keycode;
-			repeating_next = now + interval;
-			repeating_resend = false;
-			repeating->repeating = true;
-		}
-		return;
-	}
-
-	if ((repeating_next - now) < 0) {
-		int interval =
-			repeat_buffers[division->buffer].interval;
-		repeating_next = now + interval;
-		if (repeating_resend) {
-			repeating_resend = false;
-			if (auto_repeat_enabled) {
-				int sent = uart_write_byte(repeating->keycode);
-				if (sent > 0) {
-					beeper_sound_keyclick();
-				}
-			}
-		} else {
-			if (auto_repeat_enabled) {
-				int sent = uart_write_byte(SPECIAL_METRONOME);
-				if (sent > 0) {
-					beeper_sound_keyclick();
-				}
-			}
-		}
-	}
+	k_msgq_put(&msgq, &metronome_evt, K_NO_WAIT);
 }
 
 K_TIMER_DEFINE(metronome_timer, metronome, NULL);
 
-static uint8_t last_report[HID_REPORT_SIZE] = { 0x00 };
-
-static bool
-is_in_report(int keycode, const uint8_t *report)
-{
-	for (int i = HID_REPORT_FIRST_KEY; i < HID_REPORT_SIZE; i++) {
-		if (keycode == report[i]) {
-			return true;
-		}
-	}
-
-	return false;
-}
-
-static void
-lk201_key_down(int keycode)
-{
-	if (keycode == 0x00) {
-		return;
-	}
-
-	int ret;
-	struct keys_down_node *node;
-	ret = k_mem_slab_alloc(&keys_down_slab, (void **)&node, K_NO_WAIT);
-	if (ret < 0) {
-		LOG_ERR("Slab alloc failed: %d", ret);
-		return;
-	}
-
-	sys_dnode_init(&node->node);
-
-	node->keycode = keycode;
-	node->time = k_uptime_get();
-	node->repeating = false;
-	node->inhibit_auto_repeat = false;
-
-	sys_dlist_prepend(&keys_down, &node->node);
-
-	int sent = uart_write_byte(keycode);
-	node->sent = sent > 0;
-	if (sent > 0) {
-		beeper_sound_keyclick();
-	}
-
-	repeating_resend = true;
-}
-
-/* Track Down/Up keys released in this report */
-static int up_down_ups[16];
-static int up_down_ups_count = 0;
-
-/* Send codes for released Down/Up keys (or ALL UPS if none left pressed ) */
-static void
-send_up_down_ups(void) {
-	if (up_down_ups_count <= 0) {
-		return;
-	}
-
-	struct keys_down_node *cn;
-	bool other_down_up = false;
-	SYS_DLIST_FOR_EACH_CONTAINER(&keys_down, cn, node) {
-		struct division *division =
-			lk201_keycode_to_division(cn->keycode);
-		if (division == NULL) {
-			continue;
-		} else if (division->mode == MODE_DOWN_UP) {
-			other_down_up = true;
-			break;
-		}
-	}
-
-	if (!other_down_up) {
-		uart_write_byte(SPECIAL_ALL_UPS);
-		repeating_resend = true;
-	} else {
-		while (up_down_ups_count--) {
-			uart_write_byte(up_down_ups[up_down_ups_count]);
-			repeating_resend = true;
-		}
-	}
-}
-
-static void
-lk201_key_up(int keycode)
-{
-	if (keycode == 0x00) {
-		return;
-	}
-
-	struct keys_down_node *cn, *cns;
-
-	SYS_DLIST_FOR_EACH_CONTAINER_SAFE(&keys_down, cn, cns, node) {
-		if (cn->keycode == keycode) {
-			sys_dlist_remove(&cn->node);
-			k_mem_slab_free(&keys_down_slab, (void *)cn);
-			break;
-		}
-	}
-
-	struct division *division = lk201_keycode_to_division(keycode);
-	if (division == NULL) {
-		return;
-	} else if (division->mode == MODE_DOWN_UP) {
-		up_down_ups[up_down_ups_count++] = keycode;
-	}
-}
-
-static struct message hid_message = { MSG_KEYBOARD, HID_REPORT_SIZE, { 0 } };
+static struct event hid_evt = { EVT_KEYBOARD, HID_REPORT_SIZE, { 0 } };
 
 static void
 hid_report_cb(const uint8_t *hid_report)
 {
-	memcpy(hid_message.buf, hid_report, HID_REPORT_SIZE);
-	k_msgq_put(&msgq, &hid_message, K_NO_WAIT);
-}
-
-static void
-handle_keyboard_message(const struct message *message)
-{
-	const uint8_t *this_report = message->buf;
-
-	const uint8_t this_modifiers = this_report[0];
-	const uint8_t last_modifiers = last_report[0];
-
-	up_down_ups_count = 0;
-
-	for (int i = 0; i < HID_REPORT_SIZE; i++) {
-		int key = 0;
-		if ((i == 0) || (i == 4)) {
-			key = LK201_CTRL; /* Ctrl */
-		} else if ((i == 1) || (i == 5)) {
-			key = LK201_SHIFT; /* Shift*/
-		} else {
-			continue;
-		}
-		if ((this_modifiers & (1 << i)) &&
-		    !(last_modifiers & (1 << i))) {
-			lk201_key_down(key);
-		}
-		if ((last_modifiers & (1 << i)) &&
-		    !(this_modifiers & (1 << i))) {
-			lk201_key_up(key);
-		}
-	}
-
-	for (int i = HID_REPORT_FIRST_KEY; i < HID_REPORT_SIZE; i++) {
-		if ((this_report[i] != 0x00) &&
-		    !is_in_report(this_report[i], last_report)) {
-			lk201_key_down(hid_to_lk201(this_report[i]));
-		}
-		if ((last_report[i] != 0x00) &&
-		    !is_in_report(last_report[i], this_report)) {
-			lk201_key_up(hid_to_lk201(last_report[i]));
-		}
-	}
-
-	memcpy(last_report, this_report, sizeof(last_report));
-
-	send_up_down_ups();
+	memcpy(hid_evt.buf, hid_report, HID_REPORT_SIZE);
+	k_msgq_put(&msgq, &hid_evt, K_NO_WAIT);
 }
 
 static void
@@ -390,138 +54,137 @@ send_power_on_test_result(void) {
 	uart_write(test_result, sizeof(test_result));
 }
 
-static struct message callback_message = { MSG_HOST, 0 , { 0 } };
+static struct event callback_evt = { EVT_HOST, 0 , { 0 } };
 
 static void
 uart_callback(uint8_t c)
 {
 	if (c & 0x80) {
 		/* no more parameters */
-		callback_message.buf[callback_message.size++] = c;
-		k_msgq_put(&msgq, &callback_message, K_NO_WAIT);
-		callback_message.size = 0;
-	} else if (callback_message.size < 3) {
-		callback_message.buf[callback_message.size++] = c;
+		callback_evt.buf[callback_evt.size++] = c;
+		k_msgq_put(&msgq, &callback_evt, K_NO_WAIT);
+		callback_evt.size = 0;
+	} else if (callback_evt.size < 3) {
+		callback_evt.buf[callback_evt.size++] = c;
 	}
 }
 
 static void
 init_defaults(void)
 {
-	memcpy(repeat_buffers, repeat_buffers_default, sizeof(repeat_buffers));
-	memcpy(divisions, divisions_default, sizeof(divisions));
+	lk201_init_defaults();
 	beeper_set_keyclick_volume(2);
 	beeper_set_bell_volume(2);
 }
 
 static void
-handle_light_leds(const struct message *message)
+light_leds(const struct event *event)
 {
-	if (message->size != 2) {
+	if (event->size != 2) {
 		uart_write_byte(SPECIAL_INPUT_ERROR);
-		repeating_resend = true;
+		metronome_resend();
 		return;
 	}
 
 	for (int i = 0; i < 4; i++) {
-		if (message->buf[1] & (1 << i)) {
+		if (event->buf[1] & (1 << i)) {
 			leds_set(i, 1);
 		}
 	}
 }
 
 static void
-handle_turn_off_leds(const struct message *message)
+turn_off_leds(const struct event *event)
 {
-	if (message->size != 2) {
+	if (event->size != 2) {
 		uart_write_byte(SPECIAL_INPUT_ERROR);
-		repeating_resend = true;
+		metronome_resend();
 		return;
 	}
 
 	for (int i = 0; i < 4; i++) {
-		if (message->buf[1] & (1 << i)) {
+		if (event->buf[1] & (1 << i)) {
 			leds_set(i, 0);
 		}
 	}
 }
 
 static void
-handle_disable_keyclick(const struct message *message)
+disable_keyclick(const struct event *event)
 {
-	ARG_UNUSED(message);
+	ARG_UNUSED(event);
 
 	beeper_set_keyclick_volume(-1);
 }
 
 static void
-handle_enable_keyclick_set_volume(const struct message *message)
+enable_keyclick_set_volume(const struct event *event)
 {
-	if (message->size != 2) {
+	if (event->size != 2) {
 		uart_write_byte(SPECIAL_INPUT_ERROR);
-		repeating_resend = true;
+		metronome_resend();
 		return;
 	}
 
-	beeper_set_keyclick_volume(message->buf[1] & 0x07);
+	beeper_set_keyclick_volume(event->buf[1] & 0x07);
 }
 
 static void
-handle_sound_keyclick(const struct message *message)
+sound_keyclick(const struct event *event)
 {
-	ARG_UNUSED(message);
+	ARG_UNUSED(event);
 
 	beeper_sound_keyclick();
 }
 
 static void
-handle_disable_bell(const struct message *message)
+disable_bell(const struct event *event)
 {
-	ARG_UNUSED(message);
+	ARG_UNUSED(event);
 
 	beeper_set_bell_volume(-1);
 }
 
 static void
-handle_enable_bell_set_volume(const struct message *message)
+enable_bell_set_volume(const struct event *event)
 {
-	if (message->size != 2) {
+	if (event->size != 2) {
 		uart_write_byte(SPECIAL_INPUT_ERROR);
-		repeating_resend = true;
+		metronome_resend();
 		return;
 	}
 
-	beeper_set_bell_volume(message->buf[1] & 0x07);
+	beeper_set_bell_volume(event->buf[1] & 0x07);
 }
 
 static void
-handle_sound_bell(const struct message *message)
+sound_bell(const struct event *event)
 {
-	ARG_UNUSED(message);
+	ARG_UNUSED(event);
 
 	beeper_sound_bell();
 }
 
 static void
-handle_jump_to_power_up(const struct message *message)
+jump_to_power_up(const struct event *event)
 {
-	ARG_UNUSED(message);
+	ARG_UNUSED(event);
 
 	send_power_on_test_result();
 }
 
 static void
-handle_reinstate_defaults(const struct message *message)
+reinstate_defaults(const struct event *event)
 {
-	ARG_UNUSED(message);
+	ARG_UNUSED(event);
 
 	init_defaults();
 }
 
 static void
-handle_inhibit_keyboard_transmission(const struct message *message)
+inhibit_keyboard_transmission(const struct event *event)
 {
-	ARG_UNUSED(message);
+	ARG_UNUSED(event);
 
 	leds_set(LED_LOCK, 1);
 
@@ -544,19 +207,19 @@ handle_inhibit_keyboard_transmission(const struct message *message)
 	     __cn = SYS_DLIST_PEEK_PREV_CONTAINER(__dl, __cn, __n))
 
 static void
-handle_resume_keyboard_transmission(const struct message *message)
+resume_keyboard_transmission(const struct event *event)
 {
-	ARG_UNUSED(message);
+	ARG_UNUSED(event);
 
 	leds_set(LED_LOCK, 0);
 
 	uart_unlock();
-	if (uart_get_overflow()) {
+	if (uart_overflow_get()) {
 		uart_write_byte(SPECIAL_OUTPUT_ERROR);
 	}
 
-	/* Send unsent key down messages in reverse order */
-	struct keys_down_node *cn;
+	/* Send unsent key down in reverse order */
+	struct key_down *cn;
 	SYS_DLIST_FOR_EACH_CONTAINER_REVERSE(&keys_down, cn, node) {
 		if (cn->sent) {
 			continue;
@@ -566,18 +229,18 @@ handle_resume_keyboard_transmission(const struct message *message)
 		cn->sent = true;
 	}
 
-	repeating_resend = true;
+	metronome_resend();
 }
 
 static void
-handle_temporary_auto_repeat_inhibit(const struct message *message)
+temporary_auto_repeat_inhibit(const struct event *event)
 {
-	ARG_UNUSED(message);
+	ARG_UNUSED(event);
 
-	struct keys_down_node *cn;
+	struct key_down *cn;
 	SYS_DLIST_FOR_EACH_CONTAINER(&keys_down, cn, node) {
 		struct division *division =
-			lk201_keycode_to_division(cn->keycode);
+			lk201_division_get_from_keycode(cn->keycode);
 		if (division == NULL) {
 			continue;
 		} else if (cn->inhibit_auto_repeat == true) {
@@ -590,83 +253,83 @@ handle_temporary_auto_repeat_inhibit(const struct message *message)
 }
 
 static void
-handle_enable_auto_repeat_across_keyboard(const struct message *message)
+enable_auto_repeat_across_keyboard(const struct event *event)
 {
-	ARG_UNUSED(message);
+	ARG_UNUSED(event);
 
-	auto_repeat_enabled = true;
+	metronome_auto_repeat_enable();
 }
 
 static void
-handle_disable_auto_repeat_across_keyboard(const struct message *message)
+disable_auto_repeat_across_keyboard(const struct event *event)
 {
-	ARG_UNUSED(message);
+	ARG_UNUSED(event);
 
-	auto_repeat_enabled = false;
+	metronome_auto_repeat_disable();
 }
 
 static void
-handle_change_all_auto_repeat_to_down_only(const struct message *message)
+change_all_auto_repeat_to_down_only(const struct event *event)
 {
-	ARG_UNUSED(message);
+	ARG_UNUSED(event);
 }
 
 static void
-handle_peripheral_command(const struct message *message)
+peripheral_command(const struct event *event)
 {
-	switch (message->buf[0]) {
+	switch (event->buf[0]) {
 		/* FLOW CONTROL */
 		case COMMAND_RESUME_KEYBOARD_TRANSMISSION:
-			handle_resume_keyboard_transmission(message);
+			resume_keyboard_transmission(event);
 			break;
 		case COMMAND_INHIBIT_KEYBOARD_TRANSMISSION:
-			handle_inhibit_keyboard_transmission(message);
+			inhibit_keyboard_transmission(event);
 			break;
 		/* AUTO-REPEAT */
 		case COMMAND_TEMPORARY_AUTO_REPEAT_INHIBIT:
-			handle_temporary_auto_repeat_inhibit(message);
+			temporary_auto_repeat_inhibit(event);
 			break;
 		case COMMAND_ENABLE_AUTO_REPEAT_ACROSS_KEYBOARD:
-			handle_enable_auto_repeat_across_keyboard(message);
+			enable_auto_repeat_across_keyboard(event);
 			break;
 		case COMMAND_DISABLE_AUTO_REPEAT_ACROSS_KEYBOARD:
-			handle_disable_auto_repeat_across_keyboard(message);
+			disable_auto_repeat_across_keyboard(event);
 			break;
 		case COMMAND_CHANGE_ALL_AUTO_REPEAT_TO_DOWN_ONLY:
-			handle_change_all_auto_repeat_to_down_only(message);
+			change_all_auto_repeat_to_down_only(event);
 			break;
 		/* INDICATORS */
 		case COMMAND_LIGHT_LEDS:
-			handle_light_leds(message);
+			light_leds(event);
 			break;
 		case COMMAND_TURN_OFF_LEDS:
-			handle_turn_off_leds(message);
+			turn_off_leds(event);
 			break;
 		/* AUDIO */
 		case COMMAND_DISABLE_KEYCLICK:
-			handle_disable_keyclick(message);
+			disable_keyclick(event);
 			break;
 		case COMMAND_ENABLE_KEYCLICK_SET_VOLUME:
-			handle_enable_keyclick_set_volume(message);
+			enable_keyclick_set_volume(event);
 			break;
 		case COMMAND_SOUND_KEYCLICK:
-			handle_sound_keyclick(message);
+			sound_keyclick(event);
 			break;
 		case COMMAND_DISABLE_BELL:
-			handle_disable_bell(message);
+			disable_bell(event);
 			break;
 		case COMMAND_ENABLE_BELL_SET_VOLUME:
-			handle_enable_bell_set_volume(message);
+			enable_bell_set_volume(event);
 			break;
 		case COMMAND_SOUND_BELL:
-			handle_sound_bell(message);
+			sound_bell(event);
 			break;
 		/* OTHER */
 		case COMMAND_JUMP_TO_POWER_UP:
-			handle_jump_to_power_up(message);
+			jump_to_power_up(event);
 			break;
 		case COMMAND_REINSTATE_DEFAULTS:
-			handle_reinstate_defaults(message);
+			reinstate_defaults(event);
 			break;
 		default:
 			break;
@@ -674,66 +337,66 @@ handle_peripheral_command(const struct message *message)
 }
 
 static void
-handle_transmission_command(const struct message *message)
+transmission_command(const struct event *event)
 {
-	int division = (message->buf[0] >> 3) & 0x0f;
+	int division = (event->buf[0] >> 3) & 0x0f;
 	if (division == 0x0f) {
-		if (message->size != 3) {
+		if (event->size != 3) {
 			uart_write_byte(SPECIAL_INPUT_ERROR);
-			repeating_resend = true;
+			metronome_resend();
 			return;
 		}
-		int buffer = (message->buf[0] >> 1) & 0x03;
-		int timeout = ((message->buf[1]) & 0x7f) * 5;
-		int interval = 1000 / ((message->buf[2]) & 0x7f);
-		repeat_buffers[buffer].timeout = timeout;
-		repeat_buffers[buffer].interval = interval;
+		int buffer = (event->buf[0] >> 1) & 0x03;
+		int timeout = ((event->buf[1]) & 0x7f) * 5;
+		int interval = 1000 / ((event->buf[2]) & 0x7f);
+		lk201_repeat_buffer_get(buffer)->timeout = timeout;
+		lk201_repeat_buffer_get(buffer)->interval = interval;
 	} else if (division == 0x00) {
 		uart_write_byte(SPECIAL_INPUT_ERROR);
-		repeating_resend = true;
+		metronome_resend();
 		return;
 	} else {
-		int mode = ((message->buf[0]) >> 1) & 0x03;
-		divisions[division-1].mode = mode;
-		if ((mode == MODE_AUTO_REPEAT) && (message->size == 2)) {
-			int buffer = message->buf[1] & 0x7f;
-			divisions[division-1].buffer = buffer;
+		int mode = ((event->buf[0]) >> 1) & 0x03;
+		lk201_division_get(division-1)->mode = mode;
+		if ((mode == MODE_AUTO_REPEAT) && (event->size == 2)) {
+			int buffer = event->buf[1] & 0x7f;
+			lk201_division_get(division-1)->buffer = buffer;
 		}
 
 		uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
-		repeating_resend = true;
+		metronome_resend();
 	}
 }
 
 static void
-handle_host_message(const struct message *message)
+host_event(const struct event *event)
 {
-	if (message->size == 0) {
+	if (event->size == 0) {
 		return;
 	}
 
-	if (message->buf[0] & 0x01) {
-		handle_peripheral_command(message);
+	if (event->buf[0] & 0x01) {
+		peripheral_command(event);
 	} else {
-		handle_transmission_command(message);
+		transmission_command(event);
 	}
 }
 
 static void
-handle_messages(void)
+handle_events(void)
 {
-	struct message message;
+	struct event event;
 
-	while (k_msgq_get(&msgq, &message, K_FOREVER) == 0) {
-		switch (message.source) {
-			case MSG_HOST:
-				handle_host_message(&message);
+	while (k_msgq_get(&msgq, &event, K_FOREVER) == 0) {
+		switch (event.source) {
+			case EVT_HOST:
+				host_event(&event);
 				break;
-			case MSG_METRONOME:
-				handle_metronome_message(&message);
+			case EVT_METRONOME:
+				metronome_event(&keys_down, &event);
 				break;
-			case MSG_KEYBOARD:
-				handle_keyboard_message(&message);
+			case EVT_KEYBOARD:
+				keyboard_event(&keys_down, &event);
 				break;
 			default:
 				break;
@@ -754,8 +417,8 @@ main(void)
 	beeper_init();
 
 	for (int i = 0; i < NUM_REPEAT_BUFFERS; i++) {
-		repeat_buffers[i].timeout = 300;
-		repeat_buffers[i].interval = 30;
+		lk201_repeat_buffer_get(i)->timeout = 300;
+		lk201_repeat_buffer_get(i)->interval = 30;
 	}
 
 	ret = uart_init();
@@ -782,5 +445,5 @@ main(void)
 		return -1;
 	}
 
-	handle_messages();
+	handle_events();
 }

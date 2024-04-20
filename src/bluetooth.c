@@ -24,7 +24,7 @@
 
 #include <zephyr/drivers/led_strip.h>
 
-#include "config.h"
+#include "vtbt.h"
 #include "lk201.h"
 
 #define STRIP_NODE              DT_ALIAS(led_strip)

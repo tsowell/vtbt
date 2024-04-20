@@ -9,7 +9,7 @@ int uart_write_byte(unsigned char out_char);
 int uart_write(const unsigned char buf[], size_t count);
 void uart_lock(void);
 void uart_unlock(void);
-bool uart_get_overflow(void);
+bool uart_overflow_get(void);
 void uart_flush(void);
 
 #endif /* UART_H */
