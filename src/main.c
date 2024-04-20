@@ -48,8 +48,6 @@ static struct division divisions_default[NUM_DIVISIONS] = {
 	{ .mode = MODE_DOWN_UP,       .buffer = -1 }, /* Function keys 5 */
 };
 
-K_MUTEX_DEFINE(mutex);
-
 static sys_dlist_t keys_down;
 
 struct keys_down_node {
@@ -73,7 +71,7 @@ K_MEM_SLAB_DEFINE(
 static int
 hid_to_lk201(int hid)
 {
-	if (hid < sizeof(hid_to_lk201_map)) {
+	if (hid < (int)sizeof(hid_to_lk201_map)) {
 		return hid_to_lk201_map[hid];
 	} else {
 		return 0x00;
@@ -117,16 +115,33 @@ lk201_keycode_to_division(int keycode)
 	return (division >= 0) ? &divisions[division] : NULL;
 }
 
+enum message_source { MSG_HOST, MSG_KEYBOARD, MSG_METRONOME };
+
+struct message {
+	enum message_source source;
+	uint8_t size;
+	uint8_t buf[HID_REPORT_SIZE];
+};
+
+K_MSGQ_DEFINE(msgq, sizeof(struct message), 32, 4);
+
 static bool auto_repeat_enabled = true;
 
 static int repeating_keycode = 0;
 static int repeating_next = 0;
 static bool repeating_resend = false;
 
-static void metronome_ms(struct k_timer *timer_id)
-{
-	k_mutex_lock(&mutex, K_FOREVER);
+static struct message timer_message = { MSG_METRONOME, 0 , { 0 } };
 
+static void
+metronome(struct k_timer *timer_id)
+{
+	k_msgq_put(&msgq, &timer_message, K_NO_WAIT);
+}
+
+static void
+handle_metronome_message(const struct message *message)
+{
 	struct keys_down_node *repeating = NULL;
 	struct division *division = NULL;
 	struct keys_down_node *cn;
@@ -145,7 +160,6 @@ static void metronome_ms(struct k_timer *timer_id)
 	if (repeating == NULL) {
 		repeating_keycode = 0;
 		repeating_resend = false;
-		k_mutex_unlock(&mutex);
 		return;
 	}
 
@@ -179,7 +193,6 @@ static void metronome_ms(struct k_timer *timer_id)
 			repeating_resend = false;
 			repeating->repeating = true;
 		}
-		k_mutex_unlock(&mutex);
 		return;
 	}
 
@@ -206,12 +219,9 @@ static void metronome_ms(struct k_timer *timer_id)
 			}
 		}
 	}
-
-	k_mutex_unlock(&mutex);
 }
 
-struct k_timer metronome_timer;
-K_TIMER_DEFINE(metronome_timer, metronome_ms, NULL);
+K_TIMER_DEFINE(metronome_timer, metronome, NULL);
 
 static uint8_t last_report[HID_REPORT_SIZE] = { 0x00 };
 
@@ -320,17 +330,26 @@ lk201_key_up(int keycode)
 	}
 }
 
-void
-hid_report_cb(const uint8_t *this_report)
+static struct message hid_message = { MSG_KEYBOARD, HID_REPORT_SIZE, { 0 } };
+
+static void
+hid_report_cb(const uint8_t *hid_report)
 {
-	k_mutex_lock(&mutex, K_FOREVER);
+	memcpy(hid_message.buf, hid_report, HID_REPORT_SIZE);
+	k_msgq_put(&msgq, &hid_message, K_NO_WAIT);
+}
+
+static void
+handle_keyboard_message(const struct message *message)
+{
+	const uint8_t *this_report = message->buf;
 
 	const uint8_t this_modifiers = this_report[0];
 	const uint8_t last_modifiers = last_report[0];
 
 	up_down_ups_count = 0;
 
-	for (int i = 0; i < 8; i++) {
+	for (int i = 0; i < HID_REPORT_SIZE; i++) {
 		int key = 0;
 		if ((i == 0) || (i == 4)) {
 			key = LK201_CTRL; /* Ctrl */
@@ -363,8 +382,6 @@ hid_report_cb(const uint8_t *this_report)
 	memcpy(last_report, this_report, sizeof(last_report));
 
 	send_up_down_ups();
-
-	k_mutex_unlock(&mutex);
 }
 
 static void
@@ -378,14 +395,7 @@ send_power_on_test_result(void) {
 	lk201_uart_write(test_result, sizeof(test_result));
 }
 
-struct message {
-	uint8_t size;
-	uint8_t buf[4];
-};
-
-K_MSGQ_DEFINE(uart_msgq, sizeof(struct message), 10, 4);
-
-static struct message callback_message = { 0 , { 0 } };
+static struct message callback_message = { MSG_HOST, 0 , { 0 } };
 
 static void
 uart_callback(uint8_t c)
@@ -393,9 +403,9 @@ uart_callback(uint8_t c)
 	if (c & 0x80) {
 		/* no more parameters */
 		callback_message.buf[callback_message.size++] = c;
-		k_msgq_put(&uart_msgq, &callback_message, K_NO_WAIT);
+		k_msgq_put(&msgq, &callback_message, K_NO_WAIT);
 		callback_message.size = 0;
-	} else if (callback_message.size < (sizeof(callback_message.buf) - 1)) {
+	} else if (callback_message.size < 3) {
 		callback_message.buf[callback_message.size++] = c;
 	}
 }
@@ -675,12 +685,9 @@ handle_transmission_command(const struct message *message)
 }
 
 static void
-handle_message(const struct message *message)
+handle_host_message(const struct message *message)
 {
-	k_mutex_lock(&mutex, K_FOREVER);
-
 	if (message->size == 0) {
-		k_mutex_unlock(&mutex);
 		return;
 	}
 
@@ -689,8 +696,6 @@ handle_message(const struct message *message)
 	} else {
 		handle_transmission_command(message);
 	}
-
-	k_mutex_unlock(&mutex);
 }
 
 static void
@@ -698,8 +703,20 @@ handle_messages(void)
 {
 	struct message message;
 
-	while (k_msgq_get(&uart_msgq, &message, K_FOREVER) == 0) {
-		handle_message(&message);
+	while (k_msgq_get(&msgq, &message, K_FOREVER) == 0) {
+		switch (message.source) {
+			case MSG_HOST:
+				handle_host_message(&message);
+				break;
+			case MSG_METRONOME:
+				handle_metronome_message(&message);
+				break;
+			case MSG_KEYBOARD:
+				handle_keyboard_message(&message);
+				break;
+			default:
+				break;
+		}
 	}
 }
 
@@ -726,17 +743,17 @@ main(void)
 		return -1;
 	}
 
-	send_power_on_test_result();
-	lk201_uart_write_byte(SPECIAL_INPUT_ERROR);
-	lk201_uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
-
-	k_timer_start(&metronome_timer, K_MSEC(1), K_MSEC(1));
-
 	ret = uart_set_rx_callback(uart_callback);
 	if (ret < 0) {
 		LOG_ERR("UART set rx callback failed: %d", ret);
 		return -1;
 	}
+
+	send_power_on_test_result();
+	lk201_uart_write_byte(SPECIAL_INPUT_ERROR);
+	lk201_uart_write_byte(SPECIAL_MODE_CHANGE_ACK);
+
+	k_timer_start(&metronome_timer, K_MSEC(1), K_MSEC(1));
 
 	ret = bluetooth_listen(hid_report_cb);
 	if (ret < 0) {

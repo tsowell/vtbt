@@ -6,7 +6,7 @@
 #include "uart.h"
 
 static bool locked = false;
-static uint8_t locked_buf[4];
+static uint8_t locked_buf[5];
 static int locked_count;
 static bool locked_missed;
 
@@ -24,11 +24,11 @@ void
 lk201_uart_unlock(void)
 {
 	if (locked) {
-		for (int i = 0; i < locked_count; i++) {
-			uart_write_byte(locked_buf[i]);
-		}
 		if (locked_missed) {
-			uart_write_byte(SPECIAL_OUTPUT_ERROR);
+			locked_buf[locked_count] = SPECIAL_OUTPUT_ERROR;
+			uart_write(locked_buf, locked_count + 1);
+		} else {
+			uart_write(locked_buf, locked_count);
 		}
 		locked = false;
 	}
@@ -54,11 +54,17 @@ lk201_uart_write_byte(uint8_t out_char)
 int
 lk201_uart_write(const uint8_t *buf, size_t count)
 {
-	int ret = 0;
-
-	for (size_t i = 0; i < count; i++) {
-		ret += lk201_uart_write_byte(buf[i]);
+	if (!locked) {
+		uart_write(buf, count);
+		return count;
+	} else {
+		size_t written = 0;
+		while (locked_count < 4 && written < count) {
+			locked_buf[locked_count++] = buf[written++];
+		}
+		if (written < count) {
+			locked_missed = true;
+		}
+		return written;
 	}
-
-	return ret;
 }

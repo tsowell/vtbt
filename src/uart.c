@@ -2,12 +2,17 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/ring_buffer.h>
 
 #include "uart.h"
 
 LOG_MODULE_REGISTER(uart, CONFIG_LOG_DEFAULT_LEVEL);
 
 #define UART_DEVICE_NODE DT_CHOSEN(zephyr_vt_uart)
+
+K_SEM_DEFINE(tx_space_sem, 0, 1);
+
+RING_BUF_DECLARE(tx_buf, 4);
 
 static const struct device *const uart_dev = DEVICE_DT_GET(UART_DEVICE_NODE);
 
@@ -17,23 +22,60 @@ static const struct gpio_dt_spec uart_tx_enable =
 static serial_cb user_callback = NULL;
 
 static void
-callback(const struct device *dev, void *user_data)
+callback_tx(void)
+{
+	uint32_t size;
+	int filled_size;
+	uint8_t *data;
+	while (!ring_buf_is_empty(&tx_buf)) {
+		size = ring_buf_get_claim(&tx_buf, &data, 4);
+		filled_size = uart_fifo_fill(uart_dev, data, size);
+		if (filled_size < 0) {
+			ring_buf_get_finish(&tx_buf, 0);
+			return;
+		}
+		int ret = ring_buf_get_finish(&tx_buf, (uint32_t)filled_size);
+		if (filled_size > 0) {
+			k_sem_give(&tx_space_sem);
+		}
+		if (ret < 0) {
+			return;
+		}
+	}
+
+	uart_irq_tx_disable(uart_dev);
+}
+
+static void
+callback_rx(void)
 {
 	uint8_t c;
-
-	if (!uart_irq_update(uart_dev)) {
-		return;
-	}
-
-	if (!uart_irq_rx_ready(uart_dev)) {
-		return;
-	}
 
 	/* read until FIFO empty */
 	while (uart_fifo_read(uart_dev, &c, 1) == 1) {
 		if (user_callback) {
 			user_callback(c);
 		}
+	}
+}
+
+
+static void
+callback(const struct device *dev, void *user_data)
+{
+	ARG_UNUSED(dev);
+	ARG_UNUSED(user_data);
+
+	if (uart_irq_update(uart_dev) < 0) {
+		return;
+	}
+
+	if (uart_irq_tx_ready(uart_dev) > 0) {
+		callback_tx();
+	}
+
+	if (uart_irq_rx_ready(uart_dev) > 0) {
+		callback_rx();
 	}
 }
 
@@ -86,13 +128,26 @@ uart_set_rx_callback(serial_cb serial_cb)
 void
 uart_write_byte(unsigned char out_char)
 {
-	uart_poll_out(uart_dev, out_char);
+	while (ring_buf_put(&tx_buf, &out_char, 1) < 1) {
+		k_sem_take(&tx_space_sem, K_FOREVER);
+	}
+	uart_irq_tx_enable(uart_dev);
 }
 
 void
 uart_write(const unsigned char buf[], size_t count)
 {
-	for (size_t i = 0; i < count; i++) {
-		uart_poll_out(uart_dev, buf[i]);
+	uint32_t total = 0;
+	while (true) {
+		uint32_t wrote = ring_buf_put(
+			&tx_buf, &buf[total], count - total);
+		if (wrote > 0) {
+			uart_irq_tx_enable(uart_dev);
+		}
+		total += wrote;
+		if (total >= count) {
+			break;
+		}
+		k_sem_take(&tx_space_sem, K_FOREVER);
 	}
 }
