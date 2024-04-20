@@ -65,6 +65,9 @@ static struct bt_gatt_subscribe_params subscribe_params;
 
 static void pairing_complete_func(struct bt_conn *conn, bool bonded)
 {
+	ARG_UNUSED(conn);
+	ARG_UNUSED(bonded);
+
 	rgb_led_set(&color_amber);
 }
 
@@ -78,6 +81,8 @@ static uint8_t notify_func(struct bt_conn *conn,
 			   struct bt_gatt_subscribe_params *params,
 			   const void *data, uint16_t length)
 {
+	ARG_UNUSED(conn);
+
 	if (!data) {
 		LOG_INF("[UNSUBSCRIBED]");
 		params->value_handle = 0U;
@@ -225,6 +230,8 @@ static bool eir_found(struct bt_data *data, void *user_data)
 static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 			 struct net_buf_simple *ad)
 {
+	ARG_UNUSED(rssi);
+
 	char dev[BT_ADDR_LE_STR_LEN];
 
 	bt_addr_le_to_str(addr, dev, sizeof(dev));

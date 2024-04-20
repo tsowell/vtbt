@@ -130,12 +130,15 @@ static struct message timer_message = { MSG_METRONOME, 0 , { 0 } };
 static void
 metronome(struct k_timer *timer_id)
 {
+	ARG_UNUSED(timer_id);
 	k_msgq_put(&msgq, &timer_message, K_NO_WAIT);
 }
 
 static void
 handle_metronome_message(const struct message *message)
 {
+	ARG_UNUSED(message);
+
 	struct keys_down_node *repeating = NULL;
 	struct division *division = NULL;
 	struct keys_down_node *cn;
@@ -446,6 +449,8 @@ handle_turn_off_leds(const struct message *message)
 static void
 handle_disable_keyclick(const struct message *message)
 {
+	ARG_UNUSED(message);
+
 	beeper_set_keyclick_volume(-1);
 }
 
@@ -464,12 +469,16 @@ handle_enable_keyclick_set_volume(const struct message *message)
 static void
 handle_sound_keyclick(const struct message *message)
 {
+	ARG_UNUSED(message);
+
 	beeper_sound_keyclick();
 }
 
 static void
 handle_disable_bell(const struct message *message)
 {
+	ARG_UNUSED(message);
+
 	beeper_set_bell_volume(-1);
 }
 
@@ -488,24 +497,32 @@ handle_enable_bell_set_volume(const struct message *message)
 static void
 handle_sound_bell(const struct message *message)
 {
+	ARG_UNUSED(message);
+
 	beeper_sound_bell();
 }
 
 static void
 handle_jump_to_power_up(const struct message *message)
 {
+	ARG_UNUSED(message);
+
 	send_power_on_test_result();
 }
 
 static void
 handle_reinstate_defaults(const struct message *message)
 {
+	ARG_UNUSED(message);
+
 	init_defaults();
 }
 
 static void
 handle_inhibit_keyboard_transmission(const struct message *message)
 {
+	ARG_UNUSED(message);
+
 	leds_set(LED_LOCK, 1);
 
 	uart_write_byte(SPECIAL_KBD_LOCKED_ACK);
@@ -529,6 +546,8 @@ handle_inhibit_keyboard_transmission(const struct message *message)
 static void
 handle_resume_keyboard_transmission(const struct message *message)
 {
+	ARG_UNUSED(message);
+
 	leds_set(LED_LOCK, 0);
 
 	uart_unlock();
@@ -553,6 +572,8 @@ handle_resume_keyboard_transmission(const struct message *message)
 static void
 handle_temporary_auto_repeat_inhibit(const struct message *message)
 {
+	ARG_UNUSED(message);
+
 	struct keys_down_node *cn;
 	SYS_DLIST_FOR_EACH_CONTAINER(&keys_down, cn, node) {
 		struct division *division =
@@ -571,18 +592,23 @@ handle_temporary_auto_repeat_inhibit(const struct message *message)
 static void
 handle_enable_auto_repeat_across_keyboard(const struct message *message)
 {
+	ARG_UNUSED(message);
+
 	auto_repeat_enabled = true;
 }
 
 static void
 handle_disable_auto_repeat_across_keyboard(const struct message *message)
 {
+	ARG_UNUSED(message);
+
 	auto_repeat_enabled = false;
 }
 
 static void
 handle_change_all_auto_repeat_to_down_only(const struct message *message)
 {
+	ARG_UNUSED(message);
 }
 
 static void

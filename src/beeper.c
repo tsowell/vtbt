@@ -62,6 +62,8 @@ beeper_off(void)
 
 void beeper_off_work_handler(struct k_work *work)
 {
+	ARG_UNUSED(work);
+
 	beeper_off();
 }
 
@@ -69,6 +71,8 @@ K_WORK_DEFINE(beeper_off_work, beeper_off_work_handler);
 
 void beeper_off_timer_handler(struct k_timer *dummy)
 {
+	ARG_UNUSED(dummy);
+
 	k_work_submit(&beeper_off_work);
 }
 
