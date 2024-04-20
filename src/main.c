@@ -287,25 +287,12 @@ peripheral_command(const struct event *event)
 		case COMMAND_INHIBIT_KEYBOARD_TRANSMISSION:
 			inhibit_keyboard_transmission(event);
 			break;
-		/* AUTO-REPEAT */
-		case COMMAND_TEMPORARY_AUTO_REPEAT_INHIBIT:
-			temporary_auto_repeat_inhibit(event);
-			break;
-		case COMMAND_ENABLE_AUTO_REPEAT_ACROSS_KEYBOARD:
-			enable_auto_repeat_across_keyboard(event);
-			break;
-		case COMMAND_DISABLE_AUTO_REPEAT_ACROSS_KEYBOARD:
-			disable_auto_repeat_across_keyboard(event);
-			break;
-		case COMMAND_CHANGE_ALL_AUTO_REPEAT_TO_DOWN_ONLY:
-			change_all_auto_repeat_to_down_only(event);
-			break;
 		/* INDICATORS */
-		case COMMAND_LIGHT_LEDS:
-			light_leds(event);
-			break;
 		case COMMAND_TURN_OFF_LEDS:
 			turn_off_leds(event);
+			break;
+		case COMMAND_LIGHT_LEDS:
+			light_leds(event);
 			break;
 		/* AUDIO */
 		case COMMAND_DISABLE_KEYCLICK:
@@ -325,6 +312,19 @@ peripheral_command(const struct event *event)
 			break;
 		case COMMAND_SOUND_BELL:
 			sound_bell(event);
+			break;
+		/* AUTO-REPEAT */
+		case COMMAND_TEMPORARY_AUTO_REPEAT_INHIBIT:
+			temporary_auto_repeat_inhibit(event);
+			break;
+		case COMMAND_ENABLE_AUTO_REPEAT_ACROSS_KEYBOARD:
+			enable_auto_repeat_across_keyboard(event);
+			break;
+		case COMMAND_DISABLE_AUTO_REPEAT_ACROSS_KEYBOARD:
+			disable_auto_repeat_across_keyboard(event);
+			break;
+		case COMMAND_CHANGE_ALL_AUTO_REPEAT_TO_DOWN_ONLY:
+			change_all_auto_repeat_to_down_only(event);
 			break;
 		/* OTHER */
 		case COMMAND_JUMP_TO_POWER_UP:
