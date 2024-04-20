@@ -111,5 +111,6 @@ struct repeat_buffer *lk201_repeat_buffer_get(int repeat_buffer);
 struct division *lk201_division_get(int division);
 struct division *lk201_division_get_from_keycode(int keycode);
 int lk201_keycode_get_from_hid(int hid);
+void lk201_change_all_auto_repeat_to_down_only(void);
 
 #endif /* LK201_H */

@@ -97,3 +97,14 @@ lk201_keycode_get_from_hid(int hid)
 		return 0x00;
 	}
 }
+
+void
+lk201_change_all_auto_repeat_to_down_only(void)
+{
+	for (int i = 0; i < NUM_DIVISIONS; i++) {
+		struct division *division = &divisions[i];
+		if (division->mode == MODE_AUTO_REPEAT) {
+			division->mode = MODE_DOWN_ONLY;
+		}
+	}
+}

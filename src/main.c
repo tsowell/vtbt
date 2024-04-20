@@ -272,6 +272,8 @@ static void
 change_all_auto_repeat_to_down_only(const struct event *event)
 {
 	ARG_UNUSED(event);
+
+	lk201_change_all_auto_repeat_to_down_only();
 }
 
 static void
