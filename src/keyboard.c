@@ -157,7 +157,7 @@ keyboard_event(sys_dlist_t *keys_down, const struct event *event)
 
 	up_down_ups_count = 0;
 
-	for (int i = 0; i < HID_REPORT_SIZE; i++) {
+	for (int i = 0; i < 8; i++) {
 		int key = 0;
 		if ((i == 0) || (i == 4)) {
 			key = LK201_CTRL; /* Ctrl */
