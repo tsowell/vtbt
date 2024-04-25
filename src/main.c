@@ -88,7 +88,7 @@ inhibit_keyboard_transmission(const struct event *event)
 {
 	ARG_UNUSED(event);
 
-	leds_set(LED_LOCK, 1);
+	leds_on(LED_LOCK);
 
 	uart_write_byte(SPECIAL_KBD_LOCKED_ACK);
 	uart_flush();
@@ -113,7 +113,7 @@ resume_keyboard_transmission(const struct event *event)
 {
 	ARG_UNUSED(event);
 
-	leds_set(LED_LOCK, 0);
+	leds_off(LED_LOCK);
 
 	uart_unlock();
 	if (uart_overflow_get()) {
@@ -147,7 +147,7 @@ light_leds(const struct event *event)
 
 	for (int i = 0; i < 4; i++) {
 		if (event->buf[1] & (1 << i)) {
-			leds_set(i, 1);
+			leds_on(i);
 		}
 	}
 }
@@ -163,7 +163,7 @@ turn_off_leds(const struct event *event)
 
 	for (int i = 0; i < 4; i++) {
 		if (event->buf[1] & (1 << i)) {
-			leds_set(i, 0);
+			leds_off(i);
 		}
 	}
 }

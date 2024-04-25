@@ -9,6 +9,7 @@
 #define LED_WAIT         0
 
 int leds_init(void);
-void leds_set(int which, int value);
+void leds_on(int which);
+void leds_off(int which);
 
 #endif /* LEDS_H */

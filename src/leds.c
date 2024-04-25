@@ -34,7 +34,13 @@ leds_init(void)
 }
 
 void
-leds_set(int which, int value)
+leds_on(int which)
 {
-	gpio_pin_set_dt(&leds[which], value);
+	gpio_pin_set_dt(&leds[which], 1);
+}
+
+void
+leds_off(int which)
+{
+	gpio_pin_set_dt(&leds[which], 0);
 }
