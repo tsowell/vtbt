@@ -173,7 +173,11 @@ discover_func(struct bt_conn *conn,
 			LOG_ERR("Subscribe failed (err %d)", err);
 		} else {
 			LOG_ERR("[SUBSCRIBED]");
-			rgb_led_set(&color_green);
+			if (bt_conn_get_security(conn) >= BT_SECURITY_L2) {
+				rgb_led_set(&color_amber);
+			} else {
+				rgb_led_set(&color_green);
+			}
 		}
 
 		return BT_GATT_ITER_STOP;
