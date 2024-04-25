@@ -85,8 +85,9 @@ lk201_division_get_from_keycode(int keycode)
 	return (division >= 0) ? &divisions[division] : NULL;
 }
 
-/* lk201_keycode_from_hid_map */
-#include "lk201_map.c"
+static int hid_to_lk201_map[] = {
+	#include "lk201_map.txt"
+};
 
 int
 lk201_keycode_get_from_hid(int hid)
