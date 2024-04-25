@@ -1,5 +1,3 @@
-/* main.c - Application main entry point */
-
 /*
  * Copyright (c) 2015-2016 Intel Corporation
  *
@@ -43,7 +41,8 @@ static const struct led_rgb color_amber = { .r = 0x03, .g = 0x01, .b = 0x00 };
 static const struct led_rgb color_blue  = { .r = 0x00, .g = 0x00, .b = 0x04 };
 static const struct led_rgb color_green = { .r = 0x00, .g = 0x04, .b = 0x00 };
 
-static void rgb_led_set(const struct led_rgb *color)
+static void
+rgb_led_set(const struct led_rgb *color)
 {
 	memset(&pixels, 0x00, sizeof(pixels));
 	for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
@@ -63,7 +62,8 @@ static struct bt_uuid_16 discover_uuid = BT_UUID_INIT_16(0);
 static struct bt_gatt_discover_params discover_params;
 static struct bt_gatt_subscribe_params subscribe_params;
 
-static void pairing_complete_func(struct bt_conn *conn, bool bonded)
+static void
+pairing_complete_func(struct bt_conn *conn, bool bonded)
 {
 	ARG_UNUSED(conn);
 	ARG_UNUSED(bonded);
@@ -77,9 +77,10 @@ static struct bt_conn_auth_info_cb auth_info_cb = {
 	.bond_deleted = NULL,
 };
 
-static uint8_t notify_func(struct bt_conn *conn,
-			   struct bt_gatt_subscribe_params *params,
-			   const void *data, uint16_t length)
+static uint8_t
+notify_func(struct bt_conn *conn,
+            struct bt_gatt_subscribe_params *params,
+            const void *data, uint16_t length)
 {
 	ARG_UNUSED(conn);
 
@@ -91,10 +92,6 @@ static uint8_t notify_func(struct bt_conn *conn,
 
 	if (length == HID_REPORT_SIZE) {
 		hid_report_cb((const uint8_t *)data);
-//		const uint8_t *bytes = data;
-//		LOG_INF("%02x %02x %02x %02x %02x %02x %02x %02x",
-//		        bytes[0], bytes[1], bytes[2], bytes[3],
-//		        bytes[4], bytes[5], bytes[6], bytes[7]);
 	} else {
 		LOG_INF("[NOTIFICATION] data %p length %u", data, length);
 	}
@@ -104,9 +101,10 @@ static uint8_t notify_func(struct bt_conn *conn,
 
 static uint16_t hids_handle = 0;
 
-static uint8_t discover_func(struct bt_conn *conn,
-			     const struct bt_gatt_attr *attr,
-			     struct bt_gatt_discover_params *params)
+static uint8_t
+discover_func(struct bt_conn *conn,
+              const struct bt_gatt_attr *attr,
+              struct bt_gatt_discover_params *params)
 {
 	int err;
 
@@ -120,7 +118,8 @@ static uint8_t discover_func(struct bt_conn *conn,
 
 	if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_HIDS)) {
 		hids_handle = attr->handle;
-		memcpy(&discover_uuid, BT_UUID_HIDS_BOOT_KB_IN_REPORT, sizeof(discover_uuid));
+		memcpy(&discover_uuid, BT_UUID_HIDS_BOOT_KB_IN_REPORT,
+		       sizeof(discover_uuid));
 		discover_params.uuid = &discover_uuid.uuid;
 		discover_params.start_handle = hids_handle + 1;
 		discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
@@ -129,8 +128,10 @@ static uint8_t discover_func(struct bt_conn *conn,
 		if (err) {
 			LOG_ERR("Discover failed (err %d)", err);
 		}
-	} else if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_HIDS_BOOT_KB_IN_REPORT)) {
-		memcpy(&discover_uuid, BT_UUID_HIDS_BOOT_KB_OUT_REPORT, sizeof(discover_uuid));
+	} else if (!bt_uuid_cmp(discover_params.uuid,
+	                        BT_UUID_HIDS_BOOT_KB_IN_REPORT)) {
+		memcpy(&discover_uuid, BT_UUID_HIDS_BOOT_KB_OUT_REPORT,
+		       sizeof(discover_uuid));
 		discover_params.uuid = &discover_uuid.uuid;
 		discover_params.start_handle = hids_handle + 1;
 		discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
@@ -139,8 +140,10 @@ static uint8_t discover_func(struct bt_conn *conn,
 		if (err) {
 			LOG_ERR("Discover failed (err %d)", err);
 		}
-	} else if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_HIDS_BOOT_KB_OUT_REPORT)) {
-		memcpy(&discover_uuid, BT_UUID_HIDS_REPORT, sizeof(discover_uuid));
+	} else if (!bt_uuid_cmp(discover_params.uuid,
+	                        BT_UUID_HIDS_BOOT_KB_OUT_REPORT)) {
+		memcpy(&discover_uuid, BT_UUID_HIDS_REPORT,
+		       sizeof(discover_uuid));
 		discover_params.uuid = &discover_uuid.uuid;
 		discover_params.start_handle = hids_handle + 1;
 		discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
@@ -179,12 +182,11 @@ static uint8_t discover_func(struct bt_conn *conn,
 	return BT_GATT_ITER_STOP;
 }
 
-static bool eir_found(struct bt_data *data, void *user_data)
+static bool
+eir_found(struct bt_data *data, void *user_data)
 {
 	bt_addr_le_t *addr = user_data;
 	int i;
-
-//	LOG_INF("[AD]: %u data_len %u", data->type, data->data_len);
 
 	switch (data->type) {
 	case BT_DATA_UUID16_SOME:
@@ -227,16 +229,15 @@ static bool eir_found(struct bt_data *data, void *user_data)
 	return true;
 }
 
-static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
-			 struct net_buf_simple *ad)
+static void
+device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
+             struct net_buf_simple *ad)
 {
 	ARG_UNUSED(rssi);
 
 	char dev[BT_ADDR_LE_STR_LEN];
 
 	bt_addr_le_to_str(addr, dev, sizeof(dev));
-//	LOG_INF("[DEVICE]: %s, AD evt type %u, AD data len %u, RSSI %i",
-//	        dev, type, ad->len, rssi);
 
 	/* We're only interested in connectable events */
 	if (type == BT_GAP_ADV_TYPE_ADV_IND ||
@@ -245,7 +246,8 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 	}
 }
 
-static void start_scan(void)
+static void
+start_scan(void)
 {
 	int err;
 
@@ -269,7 +271,8 @@ static void start_scan(void)
 	rgb_led_set(&color_blue);
 }
 
-static void connected(struct bt_conn *conn, uint8_t conn_err)
+static void
+connected(struct bt_conn *conn, uint8_t conn_err)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 	int err;
@@ -306,7 +309,8 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 	}
 }
 
-static void disconnected(struct bt_conn *conn, uint8_t reason)
+static void
+disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
