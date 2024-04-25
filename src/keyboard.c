@@ -50,7 +50,7 @@ is_in_report(int keycode, const uint8_t *report)
 }
 
 static void
-lk201_key_down(sys_dlist_t *keys_down, int keycode)
+key_down(sys_dlist_t *keys_down, int keycode)
 {
 	if (keycode == 0x00) {
 		return;
@@ -123,7 +123,7 @@ send_up_down_ups(sys_dlist_t *keys_down) {
 }
 
 static void
-lk201_key_up(sys_dlist_t *keys_down, int keycode)
+key_up(sys_dlist_t *keys_down, int keycode)
 {
 	if (keycode == 0x00) {
 		return;
@@ -168,11 +168,11 @@ keyboard_event(sys_dlist_t *keys_down, const struct event *event)
 		}
 		if ((this_modifiers & (1 << i)) &&
 		    !(last_modifiers & (1 << i))) {
-			lk201_key_down(keys_down, key);
+			key_down(keys_down, key);
 		}
 		if ((last_modifiers & (1 << i)) &&
 		    !(this_modifiers & (1 << i))) {
-			lk201_key_up(keys_down, key);
+			key_up(keys_down, key);
 		}
 	}
 
@@ -180,12 +180,12 @@ keyboard_event(sys_dlist_t *keys_down, const struct event *event)
 		if ((this_report[i] != 0x00) &&
 		    !is_in_report(this_report[i], last_report)) {
 			int keycode = lk201_keycode_get_from_hid(this_report[i]);
-			lk201_key_down(keys_down, keycode);
+			key_down(keys_down, keycode);
 		}
 		if ((last_report[i] != 0x00) &&
 		    !is_in_report(last_report[i], this_report)) {
 			int keycode = lk201_keycode_get_from_hid(last_report[i]);
-			lk201_key_up(keys_down, keycode);
+			key_up(keys_down, keycode);
 		}
 	}
 
