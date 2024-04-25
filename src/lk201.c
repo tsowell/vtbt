@@ -4,7 +4,7 @@
 #include "lk201.h"
 
 static struct repeat_buffer repeat_buffers[NUM_REPEAT_BUFFERS];
-static struct repeat_buffer repeat_buffers_default[NUM_REPEAT_BUFFERS] = {
+static const struct repeat_buffer repeat_buffers_default[NUM_REPEAT_BUFFERS] = {
 	{ .timeout = 500, .interval = 1000 / 30 },
 	{ .timeout = 300, .interval = 1000 / 30 },
 	{ .timeout = 500, .interval = 1000 / 40 },
@@ -12,7 +12,7 @@ static struct repeat_buffer repeat_buffers_default[NUM_REPEAT_BUFFERS] = {
 };
 
 static struct division divisions[NUM_DIVISIONS];
-static struct division divisions_default[NUM_DIVISIONS] = {
+static const struct division divisions_default[NUM_DIVISIONS] = {
 	{ .mode = MODE_AUTO_REPEAT,   .buffer =  0 }, /* Main array */
 	{ .mode = MODE_AUTO_REPEAT,   .buffer =  0 }, /* Keypad */
 	{ .mode = MODE_AUTO_REPEAT,   .buffer =  1 }, /* Delete */
