@@ -1,0 +1,10 @@
+﻿"Symbol";"Value";"Unit";
+"TraceParts.PartNumber";"90-06062020-071364";"";
+"REFERENCE";"0955016449";"";
+"TraceParts.PartTitle";"Modular Jack, Right-Angle, Surface Mount, 4/4, Low Profile, Tube";"";
+"TraceParts.InstanceId";"90-06062020-0713642N3XX9WWY2MK673V115V3T3RA";"";
+"SUPPLIER";"Molex";"";
+"DESIGN";"Modular Jack, Right-Angle, Surface Mount, 4/4, Low Profile, Tube";"";
+"TRACEPARTS";"TRACEPARTS";"";
+"TraceParts.PartLanguage";"en";"";
+"TraceParts.PartVersion";"1.0.1";"";
