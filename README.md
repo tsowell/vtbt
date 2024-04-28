@@ -1,5 +1,7 @@
 # Bluetooth to LK201 bridge for DEC video terminals
 
+<img src="./images/vtbt.jpg" width="30%"/> <img src="./images/vtbt_with_devkit.jpg" width="30%"/>
+
 This repository contains Zephyr RTOS firmware code and KiCad hardware files for
 a device which interfaces a DEC VT to a Bluetooth keyboard via an emulated
 LK201 interface.
