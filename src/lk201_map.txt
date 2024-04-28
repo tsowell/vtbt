@@ -1,4 +1,3 @@
-static int hid_to_lk201_map[128] = {
 	0x00 /* 0x00 No key pressed */,
 	0x00 /* 0x01 Phantom key */,
 	0x00 /* 0x02 POST fail */,
@@ -127,4 +126,3 @@ static int hid_to_lk201_map[128] = {
 	0x00 /* 0x7d Paste */,
 	0x00 /* 0x7e Find */,
 	0x00 /* 0x7f Mute */,
-};

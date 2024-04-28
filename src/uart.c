@@ -12,10 +12,13 @@ LOG_MODULE_REGISTER(uart, CONFIG_LOG_DEFAULT_LEVEL);
 
 K_SEM_DEFINE(tx_space_sem, 0, 1);
 
+/* 4-byte TX buffer, just like on the LK201. */
 RING_BUF_DECLARE(tx_buf, 4);
 
 static const struct device *const uart_dev = DEVICE_DT_GET(UART_DEVICE_NODE);
 
+/* Enable the RS-423 driver. It is disabled by default in order to prevent
+ * transmission of bootloader, etc. output from the devkit. */
 static const struct gpio_dt_spec uart_tx_enable =
 	GPIO_DT_SPEC_GET_OR(DT_NODELABEL(uart_tx_enable), gpios, {0});
 
@@ -122,9 +125,9 @@ uart_set_rx_callback(serial_cb serial_cb)
 	ret = uart_irq_callback_user_data_set(uart_dev, callback, NULL);
 	if (ret < 0) {
 		if (ret == -ENOTSUP) {
-			LOG_ERR("Interrupt-driven UART API support not enabled");
+			LOG_ERR("Interrupt-driven UART not enabled");
 		} else if (ret == -ENOSYS) {
-			LOG_ERR("UART device does not support interrupt-driven API");
+			LOG_ERR("UART does not support interrupt-driven API");
 		} else {
 			LOG_ERR("Error setting UART callback: %d", ret);
 		}

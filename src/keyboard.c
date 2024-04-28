@@ -9,14 +9,18 @@
 #include "metronome.h"
 #include "lk201.h"
 
+/* Slab for new keys_down nodes */
 K_MEM_SLAB_DEFINE(
 	keys_down_slab,
 	ROUND_UP(sizeof(struct key_down), 4),
 	16, 4
 );
 
+/* New HID reports are compared to the previous HID report to identify changes
+ * in the keys currently down. */
 static uint8_t last_report[HID_REPORT_SIZE] = { 0x00 };
 
+/* Keyclick on ctrl is disabled by default. */
 static bool ctrl_keyclick = false;
 
 void
@@ -157,6 +161,7 @@ keyboard_event(sys_dlist_t *keys_down, const struct event *event)
 
 	up_down_ups_count = 0;
 
+	/* Process the modifiers byte. */
 	for (int i = 0; i < 8; i++) {
 		int key = 0;
 		if ((i == 0) || (i == 4)) {
@@ -179,12 +184,14 @@ keyboard_event(sys_dlist_t *keys_down, const struct event *event)
 	for (int i = HID_REPORT_FIRST_KEY; i < HID_REPORT_SIZE; i++) {
 		if ((this_report[i] != 0x00) &&
 		    !is_in_report(this_report[i], last_report)) {
-			int keycode = lk201_keycode_get_from_hid(this_report[i]);
+			int keycode =
+				lk201_keycode_get_from_hid(this_report[i]);
 			key_down(keys_down, keycode);
 		}
 		if ((last_report[i] != 0x00) &&
 		    !is_in_report(last_report[i], this_report)) {
-			int keycode = lk201_keycode_get_from_hid(last_report[i]);
+			int keycode =
+				lk201_keycode_get_from_hid(last_report[i]);
 			key_up(keys_down, keycode);
 		}
 	}

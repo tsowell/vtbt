@@ -13,7 +13,7 @@
 #define MODE_AUTO_REPEAT       0x01
 #define MODE_DOWN_UP           0x03
 
-/* These are one less than their protocol values */
+/* These are one less than their one-indexed protocol values. */
 #define DIVISION_MAIN_ARRAY              0
 #define DIVISION_KEYPAD                  1
 #define DIVISION_DELETE                  2
@@ -33,9 +33,9 @@
 #define SPECIAL_KEYBOARD_ID_FIRMWARE        0x01
 #define SPECIAL_KEYBOARD_ID_HARDWARE        0x00
 /* Key down during self-test */
-#define SPECIAL_KEY_DOWN_ON_POWER_UP_ERROR  0x3D
+#define SPECIAL_KEY_DOWN_ON_POWER_UP_ERROR  0x3d
 /* Self test failed */
-#define SPECIAL_POWER_UP_SELF_TEST_ERROR    0x3E
+#define SPECIAL_POWER_UP_SELF_TEST_ERROR    0x3e
 /* Down/up key was released and no other down/up keys pressed */
 #define SPECIAL_ALL_UPS                     0xb3
 /* Auto-repeat interval has passed with key down */
@@ -91,16 +91,17 @@
  * Byte 1: KBID (firmware) 0x01
  * Byte 2: KBID (hardware) 0x00
  * Byte 3: ERROR (0x3d or 0x3e)
- * Byte 4: KEYCODE (0x00 for no key down
+ * Byte 4: KEYCODE (0x00 for no key down)
  */
 
 #define LK201_SHIFT  0xae
 #define LK201_CTRL   0xaf
 
 struct repeat_buffer {
-	/* Milliseconds before auto-repeating */
+	/* Milliseconds before auto-repeating. */
 	int timeout;
-	/* Metronome codes per second */
+	/* Milliseconds between metronome codes. (This is metronome codes per
+	 * second in the spec). */
 	int interval;
 };
 

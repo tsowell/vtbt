@@ -10,7 +10,10 @@
 static bool auto_repeat_enabled = true;
 
 static int repeating_keycode = 0;
+/* The k_uptime_get() timestamp when the next metronome should be sent. */
 static int repeating_next = 0;
+/* Set when a keycode has been transmitted while handling another event, so the
+ * keycode of a repeating key needs to be resent before resuming metronomes. */
 static bool resend = false;
 
 void
@@ -36,6 +39,7 @@ metronome_event(const sys_dlist_t *keys_down, const struct event *event)
 {
 	ARG_UNUSED(event);
 
+	/* Get the most auto-repeat-capable down key. */
 	struct key_down *repeating = NULL;
 	struct division *division = NULL;
 	struct key_down *cn;
@@ -60,6 +64,7 @@ metronome_event(const sys_dlist_t *keys_down, const struct event *event)
 	int64_t now = k_uptime_get();
 
 	if (repeating_keycode != repeating->keycode) {
+		/* We're already repeating a different key. */
 		struct repeat_buffer *repeat_buffer = lk201_repeat_buffer_get(
 			division->buffer);
 		int timeout = repeat_buffer->timeout;
