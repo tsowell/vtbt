@@ -10,10 +10,11 @@ LOG_MODULE_REGISTER(uart, CONFIG_LOG_DEFAULT_LEVEL);
 
 #define UART_DEVICE_NODE DT_CHOSEN(zephyr_vt_uart)
 
-K_SEM_DEFINE(tx_space_sem, 0, 1);
-
 /* 4-byte TX buffer, just like on the LK201. */
 RING_BUF_DECLARE(tx_buf, 4);
+
+/* Given by TX callback when new space is available in the TX buffer. */
+K_SEM_DEFINE(tx_space_sem, 0, 1);
 
 static const struct device *const uart_dev = DEVICE_DT_GET(UART_DEVICE_NODE);
 
