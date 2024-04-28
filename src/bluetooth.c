@@ -1,8 +1,11 @@
 /*
  * Copyright (c) 2015-2016 Intel Corporation
+ * Copyright (c) 2024 Thomas Sowell
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+
+/* Adapted from zephyr/samples/bluetooth/central_hr/src/main.c */
 
 #include <zephyr/types.h>
 #include <stddef.h>
