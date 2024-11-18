@@ -4908,7 +4908,7 @@
 		(uuid "b7b5b20f-b56c-41c7-9ba5-ae5d58f8bfa8")
 	)
 	(label "RS_423_RX"
-		(at 45.72 45.72 0)
+		(at 45.72 38.1 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -4919,7 +4919,7 @@
 		(uuid "c6fb96ec-c9c3-4d52-9e46-dfb1e9d3443c")
 	)
 	(label "RS_423_TX"
-		(at 45.72 38.1 0)
+		(at 45.72 45.72 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -6573,7 +6573,7 @@
 	)
 	(symbol
 		(lib_id "power:GND")
-		(at 49.53 43.18 90)
+		(at 49.53 40.64 90)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -6582,7 +6582,7 @@
 		(fields_autoplaced yes)
 		(uuid "67bafe45-9838-49e1-b00a-c649bb0de852")
 		(property "Reference" "#PWR06"
-			(at 55.88 43.18 0)
+			(at 55.88 40.64 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6591,7 +6591,7 @@
 			)
 		)
 		(property "Value" "GND"
-			(at 53.34 43.18 90)
+			(at 53.34 40.64 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6600,7 +6600,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 49.53 43.18 0)
+			(at 49.53 40.64 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6609,7 +6609,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 49.53 43.18 0)
+			(at 49.53 40.64 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6618,7 +6618,7 @@
 			)
 		)
 		(property "Description" ""
-			(at 49.53 43.18 0)
+			(at 49.53 40.64 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6847,16 +6847,15 @@
 	)
 	(symbol
 		(lib_id "power:+12V")
-		(at 49.53 40.64 270)
+		(at 49.53 43.18 270)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
 		(dnp no)
-		(fields_autoplaced yes)
 		(uuid "8a5c57c4-3e69-4bd3-a207-d1373015b004")
 		(property "Reference" "#PWR05"
-			(at 45.72 40.64 0)
+			(at 45.72 43.18 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6865,7 +6864,7 @@
 			)
 		)
 		(property "Value" "+12V"
-			(at 53.34 40.64 90)
+			(at 53.34 43.18 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6874,7 +6873,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 49.53 40.64 0)
+			(at 49.53 43.18 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6883,7 +6882,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 49.53 40.64 0)
+			(at 49.53 43.18 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6892,7 +6891,7 @@
 			)
 		)
 		(property "Description" ""
-			(at 49.53 40.64 0)
+			(at 49.53 43.18 0)
 			(effects
 				(font
 					(size 1.27 1.27)

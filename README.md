@@ -53,9 +53,8 @@ Compose keys have not been tested.
 2. Mount the ESP32-C3-DevKitM-1 on the vtbt with the USB port facing the vtbt's
    modular connector and the ESP32-C3 and antenna on the side with the LEDs.
 
-3. Connect the vtbt to a DEC terminal with a straight-wired 4P4C module cable.
-   (I'm working on a new revision of the board which uses rollover wiring so
-   that it works with the once-ubiquitous phone handset cable!)
+3. Connect the vtbt to a DEC terminal with a rollover-wired 4P4C module cable
+   (like a phone handset cable).
 
 4. Turn on the DEC terminal. The vtbt will display the terminal's power-up
    self-test sequence on its four LEDs followed by a beep.
